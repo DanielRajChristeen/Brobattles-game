@@ -33,19 +33,78 @@ enum class TokenPose {
     CELEBRATING
 }
 
+object SnakesTokens {
+    // 1. 🔴 Player 1: Red
+    // 2. 🟣 Player 2: Purple
+    // 3. 🔵 Player 3: Blue
+    // 4. 🟤 Player 4: Brown
+    // 5. 🟢 Player 5: Green
+    val COLORS = listOf(
+        Color(0xFFEF4444), // 🔴 Player 1: Red
+        Color(0xFFA855F7), // 🟣 Player 2: Purple
+        Color(0xFF3B82F6), // 🔵 Player 3: Blue
+        Color(0xFF8D6E63), // 🟤 Player 4: Brown
+        Color(0xFF22C55E)  // 🟢 Player 5: Green
+    )
+
+    val EMOJIS = listOf("🔴", "🟣", "🔵", "🟤", "🟢")
+    val NAMES = listOf("Player 1", "Player 2", "Player 3", "Player 4", "Player 5")
+
+    fun getColor(index: Int): Color = COLORS.getOrElse(index % COLORS.size) { Color(0xFFEF4444) }
+    fun getColor(player: com.example.core.engine.PlayerId): Color = getColor(player.ordinal)
+
+    fun getEmoji(index: Int): String = EMOJIS.getOrElse(index % EMOJIS.size) { "⚪" }
+    fun getEmoji(player: com.example.core.engine.PlayerId): String = getEmoji(player.ordinal)
+
+    fun getName(index: Int): String = NAMES.getOrElse(index % NAMES.size) { "Player ${index + 1}" }
+    fun getName(player: com.example.core.engine.PlayerId): String = player.displayName
+}
+
+val SnakesPlayerColors = SnakesTokens.COLORS
+
+/**
+ * Distributes up to 5 player tokens occupying the same square so all tokens remain clearly distinguishable.
+ */
+fun getPlayerOffsetOnSquare(slotIndex: Int, totalOnSquare: Int, cellSize: Float): Offset {
+    if (totalOnSquare <= 1) return Offset.Zero
+    val r = cellSize * 0.22f
+    return when (totalOnSquare) {
+        2 -> {
+            if (slotIndex == 0) Offset(-r, 0f) else Offset(r, 0f)
+        }
+        3 -> {
+            when (slotIndex) {
+                0 -> Offset(0f, -r * 0.85f)
+                1 -> Offset(-r, r * 0.7f)
+                else -> Offset(r, r * 0.7f)
+            }
+        }
+        4 -> {
+            when (slotIndex) {
+                0 -> Offset(-r, -r * 0.8f)
+                1 -> Offset(r, -r * 0.8f)
+                2 -> Offset(-r, r * 0.8f)
+                else -> Offset(r, r * 0.8f)
+            }
+        }
+        else -> { // 5 players on the same square
+            when (slotIndex) {
+                0 -> Offset.Zero // Player 1 in center
+                1 -> Offset(-r * 1.05f, -r * 0.85f)
+                2 -> Offset(r * 1.05f, -r * 0.85f)
+                3 -> Offset(-r * 1.05f, r * 0.85f)
+                else -> Offset(r * 1.05f, r * 0.85f)
+            }
+        }
+    }
+}
+
 data class PlayerTokenVisual(
+    val playerIndex: Int = 0,
     val position: Offset,
     val pose: TokenPose = TokenPose.IDLE,
     val limbPhase: Float = 0f,
-    val color: Color
-)
-
-val SnakesPlayerColors = listOf(
-    PlayfulOrange,         // Player 1: Orange
-    PlayfulPurple,         // Player 2: Purple
-    Color(0xFF10B981),     // Player 3: Emerald Green
-    Color(0xFF06B6D4),     // Player 4: Sky Blue / Cyan
-    Color(0xFFEC4899)      // Player 5: Rose Pink
+    val color: Color = SnakesTokens.getColor(playerIndex)
 )
 
 @Composable
@@ -101,14 +160,14 @@ fun SnakesAndLaddersBoardView(
                 center = p1VisualPos,
                 pose = p1Pose,
                 limbPhase = p1LimbPhase,
-                primaryColor = PlayfulOrange,
+                primaryColor = SnakesTokens.getColor(0),
                 cellSize = cellSize
             )
             drawHighContrastStickFigure(
                 center = p2VisualPos,
                 pose = p2Pose,
                 limbPhase = p2LimbPhase,
-                primaryColor = PlayfulPurple,
+                primaryColor = SnakesTokens.getColor(1),
                 cellSize = cellSize
             )
         }

@@ -86,6 +86,7 @@ import com.example.ui.screens.detail.archery.ArcheryGameView
 import com.example.ui.screens.detail.chess.ChessGameView
 import com.example.ui.screens.detail.dotconnections.DotConnectionsGameView
 import com.example.ui.screens.detail.snakesandladders.SnakesAndLaddersGameView
+import com.example.ui.screens.detail.snakesandladders.SnakesTokens
 import com.example.ui.screens.detail.tugofwar.TugOfWarGameView
 import com.example.ui.theme.PlayfulGreen
 import com.example.ui.theme.PlayfulOrange
@@ -119,6 +120,7 @@ fun GameDetailScreen(
     var dotDifficulty by rememberSaveable { mutableStateOf(DotDifficulty.MEDIUM) }
     var dotBoardSize by rememberSaveable { mutableStateOf(DotBoardSize.MEDIUM) }
     var xoDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
+    var snakesPlayerCount by rememberSaveable { mutableIntStateOf(2) }
     var targetScore by remember { mutableIntStateOf(game.defaultTargetScore) }
     var isPlaying by rememberSaveable { mutableStateOf(false) }
 
@@ -375,6 +377,8 @@ fun GameDetailScreen(
                 onDotBoardSizeSelected = { dotBoardSize = it },
                 xoDifficulty = xoDifficulty,
                 onXoDifficultySelected = { xoDifficulty = it },
+                snakesPlayerCount = snakesPlayerCount,
+                onSnakesPlayerCountSelected = { snakesPlayerCount = it },
                 targetScore = targetScore,
                 onTargetScoreSelected = { targetScore = it },
                 onBack = onBack,
@@ -439,6 +443,7 @@ fun GameDetailScreen(
                     SnakesAndLaddersGameView(
                         selectedMode = selectedMode,
                         targetScore = targetScore,
+                        initialPlayerCount = snakesPlayerCount,
                         viewModel = viewModel,
                         onChangeMode = {
                             isPlaying = false
@@ -589,6 +594,8 @@ private fun CleanLaunchView(
     onDotBoardSizeSelected: (DotBoardSize) -> Unit = {},
     xoDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
     onXoDifficultySelected: (BotDifficulty) -> Unit = {},
+    snakesPlayerCount: Int = 2,
+    onSnakesPlayerCountSelected: (Int) -> Unit = {},
     targetScore: Int,
     onTargetScoreSelected: (Int) -> Unit,
     onBack: () -> Unit,
@@ -656,8 +663,8 @@ private fun CleanLaunchView(
         // Mode Options (clean, no paragraphs of text)
         val modes = listOf(
             GameMode.SOLO to "🤖 VS BOT",
-            GameMode.LOCAL_1V1 to "👥 2 PLAYERS",
-            GameMode.BLUETOOTH_1V1 to "📱 NEARBY"
+            GameMode.LOCAL_1V1 to if (game.id.equals("snakes_and_ladders", ignoreCase = true)) "👥 LOCAL (2-5 PLAYERS)" else "👥 2 PLAYERS",
+            GameMode.BLUETOOTH_1V1 to if (game.id.equals("snakes_and_ladders", ignoreCase = true)) "📱 NEARBY (2-5 PLAYERS)" else "📱 NEARBY"
         )
 
         modes.forEach { (mode, label) ->
@@ -1008,6 +1015,63 @@ private fun CleanLaunchView(
                             ),
                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
                         )
+                    }
+                }
+            }
+        }
+
+        // SNAKES & LADDERS: PLAYER COUNT SELECTION FOR LOCAL MODE (2 to 5 Players)
+        if (game.id.equals("snakes_and_ladders", ignoreCase = true) && selectedMode == GameMode.LOCAL_1V1) {
+            Spacer(modifier = Modifier.height(18.dp))
+            Text(
+                text = "PLAYER COUNT",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp
+                ),
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                (2..5).forEach { count ->
+                    val isSelected = snakesPlayerCount == count
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(58.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isSelected) accentColor else MaterialTheme.colorScheme.surface
+                            )
+                            .border(
+                                width = if (isSelected) 2.5.dp else 1.5.dp,
+                                color = if (isSelected) accentColor else colors.border,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .bouncyClickable { onSnakesPlayerCountSelected(count) }
+                            .testTag("snakes_player_count_$count"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "$count PLAYERS",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 0.5.sp
+                                ),
+                                fontSize = 11.sp,
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = (0 until count).joinToString("") { SnakesTokens.getEmoji(it) },
+                                fontSize = 10.sp
+                            )
+                        }
                     }
                 }
             }
