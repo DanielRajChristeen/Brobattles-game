@@ -72,6 +72,8 @@ import com.example.core.engine.PlayerId
 import com.example.core.engine.tugofwar.TugOfWarGameEngine
 import com.example.core.engine.tugofwar.TugOfWarMove
 import com.example.core.engine.tugofwar.TugOfWarState
+import com.example.core.engine.tugofwar.deserializeTugState
+import com.example.core.engine.tugofwar.serializeTugState
 import com.example.core.registry.GameMode
 import com.example.ui.MainViewModel
 import com.example.ui.components.ChunkyButton
@@ -217,12 +219,45 @@ fun TugOfWarGameView(
         }
     }
 
-    // Subtle physical rope tension / centering friction
-    LaunchedEffect(gameState.status, countdown, isFinishingRound) {
-        if (gameState.status is GameStatus.InProgress && countdown == null && !isFinishingRound) {
+    fun broadcastFinalState(finalState: TugOfWarState) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.sendAction("TUG_STATE", serializeTugState(finalState))
+        }
+    }
+
+    // Subtle physical rope tension / centering friction (run only on Host in Nearby mode, or in Solo/Local)
+    LaunchedEffect(gameState.status, countdown, isFinishingRound, isNearbyMode, isHost) {
+        if ((!isNearbyMode || isHost) &&
+            gameState.status is GameStatus.InProgress &&
+            countdown == null &&
+            !isFinishingRound
+        ) {
             while (isActive && gameState.status is GameStatus.InProgress && !isFinishingRound) {
                 delay(120)
                 gameState = engine.applyFriction()
+            }
+        }
+    }
+
+    // Host broadcasts periodic state sync while match is in progress
+    LaunchedEffect(isNearbyMode, isHost, gameState.status, countdown, isFinishingRound) {
+        if (isNearbyMode && isHost && gameState.status is GameStatus.InProgress && !isFinishingRound) {
+            while (isActive && gameState.status is GameStatus.InProgress && !isFinishingRound) {
+                delay(150)
+                multiplayerManager.sendAction("TUG_STATE", serializeTugState(gameState))
+            }
+        }
+    }
+
+    // Client requests initial authoritative state upon connecting or reconnecting
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode) {
+            if (isHost) {
+                delay(100)
+                broadcastFinalState(gameState)
+            } else {
+                delay(150)
+                multiplayerManager.sendAction("TUG_REQUEST_SYNC", "")
             }
         }
     }
@@ -266,6 +301,24 @@ fun TugOfWarGameView(
         if (countdown != null || isFinishingRound) return
         if (gameState.status !is GameStatus.InProgress) return
 
+        // In Nearby mode for Client: immediate responsive visual feedback + send pull request to authoritative Host
+        if (isNearbyMode && !isHost) {
+            if (player == localPlayer) {
+                vibrate()
+                p2PullPhase = 0.05f
+                p2TapEnergy = 1.0f
+                ropeJerk = 7.0f
+                if (touchPos != null) {
+                    tapBursts.add(TapBurst(touchPos.x, touchPos.y, PlayfulPurple, System.currentTimeMillis()))
+                }
+                if (sendNetwork) {
+                    multiplayerManager.sendAction("TUG_PULL", "2")
+                }
+            }
+            return
+        }
+
+        // Host (or Solo / Local mode): Execute move on engine
         val res = engine.makeMove(TugOfWarMove(force = 1.0f), player)
         if (res is MoveResult.Success) {
             gameState = res.newState
@@ -288,26 +341,87 @@ fun TugOfWarGameView(
                 tapBursts.add(TapBurst(touchPos.x, touchPos.y, burstColor, System.currentTimeMillis()))
             }
 
-            if (sendNetwork && isNearbyMode) {
+            if (sendNetwork && isNearbyMode && isHost) {
                 multiplayerManager.sendAction("TUG_PULL", if (player == PlayerId.PLAYER_1) "1" else "2")
+                if (res.newState.status is GameStatus.MatchWon || res.newState.status is GameStatus.RoundWon) {
+                    broadcastFinalState(res.newState)
+                }
             }
         }
     }
 
     // Listen for incoming actions in Nearby Mode for Tug of War
-    LaunchedEffect(isNearbyMode) {
+    LaunchedEffect(isNearbyMode, isHost) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
                     "TUG_PULL" -> {
-                        val player = if (action.payload == "1") PlayerId.PLAYER_1 else PlayerId.PLAYER_2
-                        handleTap(player, null, sendNetwork = false)
+                        // Discard lingering pulls if match or round is already over
+                        if (gameState.status !is GameStatus.InProgress || isFinishingRound) return@collect
+
+                        val pullingPlayer = if (action.payload == "1") PlayerId.PLAYER_1 else PlayerId.PLAYER_2
+
+                        if (isHost) {
+                            // Host executes move authoritatively for the pulling player
+                            val res = engine.makeMove(TugOfWarMove(force = 1.0f), pullingPlayer)
+                            if (res is MoveResult.Success) {
+                                gameState = res.newState
+                                vibrate()
+                                if (pullingPlayer == PlayerId.PLAYER_1) {
+                                    p1PullPhase = 0.05f
+                                    p1TapEnergy = 1.0f
+                                    ropeJerk = -7.0f
+                                } else {
+                                    p2PullPhase = 0.05f
+                                    p2TapEnergy = 1.0f
+                                    ropeJerk = 7.0f
+                                }
+
+                                // If move caused victory (Host win or Client win), broadcast immediately!
+                                if (res.newState.status is GameStatus.MatchWon || res.newState.status is GameStatus.RoundWon) {
+                                    broadcastFinalState(res.newState)
+                                }
+                            }
+                        } else {
+                            // Client receiving Host pull: trigger visual feedback
+                            p1PullPhase = 0.05f
+                            p1TapEnergy = 1.0f
+                            ropeJerk = -7.0f
+                            vibrate()
+                        }
+                    }
+                    "TUG_STATE" -> {
+                        val receivedState = deserializeTugState(action.payload) ?: return@collect
+
+                        // Persistence guard: If local match has already ended (MatchWon), do NOT allow
+                        // an out-of-order in-progress state to resurrect the match!
+                        if (gameState.status is GameStatus.MatchWon && receivedState.status !is GameStatus.MatchWon) {
+                            return@collect
+                        }
+
+                        // Idempotent guard: If already in MatchWon and received duplicate MatchWon,
+                        // update engine quietly without restarting animations or resetting dialogs.
+                        if (gameState.status is GameStatus.MatchWon && receivedState.status is GameStatus.MatchWon) {
+                            engine.syncState(receivedState)
+                            return@collect
+                        }
+
+                        engine.syncState(receivedState)
+                        gameState = receivedState
+                    }
+                    "TUG_REQUEST_SYNC" -> {
+                        if (isHost) {
+                            broadcastFinalState(gameState)
+                        }
                     }
                     "TUG_NEXT_ROUND" -> {
                         gameState = engine.startRound()
                         isFinishingRound = false
                         finishProgress = 0f
                         vibrate()
+                        if (isHost) {
+                            broadcastFinalState(gameState)
+                        }
                     }
                     "TUG_REMATCH" -> {
                         val target = action.payload.toIntOrNull() ?: targetScore
@@ -318,6 +432,9 @@ fun TugOfWarGameView(
                         showResultDialog = false
                         matchRecorded = false
                         vibrate()
+                        if (isHost) {
+                            broadcastFinalState(gameState)
+                        }
                     }
                 }
             }
@@ -382,6 +499,10 @@ fun TugOfWarGameView(
                         showResultDialog = false
                         matchRecorded = false
                         vibrate()
+                        if (isNearbyMode) {
+                            multiplayerManager.sendAction("TUG_REMATCH", targetScore.toString())
+                            broadcastFinalState(engine.state)
+                        }
                     }
                     .testTag("tug_restart_button"),
                 contentAlignment = Alignment.Center
@@ -756,6 +877,9 @@ fun TugOfWarGameView(
                     vibrate()
                     if (isNearbyMode) {
                         multiplayerManager.sendAction("TUG_NEXT_ROUND", "")
+                        if (isHost) {
+                            broadcastFinalState(gameState)
+                        }
                     }
                 },
                 backgroundColor = PlayfulOrange,
@@ -825,6 +949,9 @@ fun TugOfWarGameView(
                         vibrate()
                         if (isNearbyMode) {
                             multiplayerManager.sendAction("TUG_REMATCH", targetScore.toString())
+                            if (isHost) {
+                                broadcastFinalState(engine.state)
+                            }
                         }
                     },
                     backgroundColor = PlayfulOrange,

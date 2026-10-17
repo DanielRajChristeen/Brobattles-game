@@ -55,6 +55,18 @@ class TugOfWarGameEngine(
         return initializeGame(targetScore)
     }
 
+    /**
+     * Synchronizes authoritative remote state.
+     * Prevents delayed or duplicate in-progress messages from overwriting an ended match.
+     */
+    fun syncState(newState: TugOfWarState): TugOfWarState {
+        if (_state.status is GameStatus.MatchWon && newState.status !is GameStatus.MatchWon) {
+            return _state
+        }
+        _state = newState
+        return _state
+    }
+
     override fun validateMove(move: TugOfWarMove, player: PlayerId): Boolean {
         return _state.status is GameStatus.InProgress
     }
