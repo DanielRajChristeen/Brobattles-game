@@ -89,7 +89,7 @@ class LocalWifiMultiplayerManager(
         gameId: String,
         gameTitle: String,
         hostName: String = localDeviceName,
-        maxPlayers: Int = if (gameId.equals("snakes_and_ladders", ignoreCase = true)) 5 else 2
+        maxPlayers: Int = if (gameId.equals("snakes_and_ladders", ignoreCase = true) || gameId.equals("dot_connections", ignoreCase = true)) 5 else 2
     ) {
         disconnect()
 
@@ -310,7 +310,7 @@ class LocalWifiMultiplayerManager(
                 val state = _lobbyState.value
                 val remainingClients = synchronized(clientSockets) { clientSockets.size }
                 if (state is MultiplayerLobbyState.Connected || state is MultiplayerLobbyState.InGame) {
-                    if (remainingClients == 0 && !session.gameId.equals("snakes_and_ladders", ignoreCase = true)) {
+                    if (remainingClients == 0 && !session.gameId.equals("snakes_and_ladders", ignoreCase = true) && !session.gameId.equals("dot_connections", ignoreCase = true)) {
                         onPeerDisconnected("Opponent disconnected")
                     } else if (assignedPlayer != null) {
                         sendAction("PLAYER_DISCONNECTED", assignedPlayer.name)
@@ -426,7 +426,7 @@ class LocalWifiMultiplayerManager(
             hostIp = hostIp.trim(),
             port = port,
             currentPlayers = 1,
-            maxPlayers = if (gameId.equals("snakes_and_ladders", ignoreCase = true)) 5 else 2
+            maxPlayers = if (gameId.equals("snakes_and_ladders", ignoreCase = true) || gameId.equals("dot_connections", ignoreCase = true)) 5 else 2
         )
         connectToSession(directSession, playerName)
     }

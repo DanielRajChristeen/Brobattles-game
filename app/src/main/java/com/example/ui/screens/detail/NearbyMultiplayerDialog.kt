@@ -53,6 +53,7 @@ import com.example.core.multiplayer.DiscoveredSession
 import com.example.core.multiplayer.LocalWifiMultiplayerManager
 import com.example.core.multiplayer.MultiplayerLobbyState
 import com.example.core.registry.GameDefinition
+import com.example.core.engine.dotconnections.DotPlayer
 import com.example.ui.components.ChunkyButton
 import com.example.ui.components.bouncyClickable
 import com.example.ui.screens.detail.snakesandladders.SnakesTokens
@@ -272,6 +273,7 @@ private fun HostLobbyContent(
     }
     val opponent = players.firstOrNull { !it.isHost }
     val isChess = game.id.equals("chess", ignoreCase = true)
+    val isDotConnections = game.id.equals("dot_connections", ignoreCase = true)
     val chessHostColor by manager.chessHostColor.collectAsState()
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -423,17 +425,27 @@ private fun HostLobbyContent(
             players.forEachIndexed { index, player ->
                 val roleLabel = when {
                     isChess -> if (player.isHost) (if (chessHostColor == "WHITE") "HOST • WHITE ⚪" else "HOST • BLACK ⚫") else (if (chessHostColor == "WHITE") "PLAYER 2 • BLACK ⚫" else "PLAYER 2 • WHITE ⚪")
+                    isDotConnections -> {
+                        val dotPlayer = DotPlayer.fromOrdinal(index)
+                        val emoji = dotPlayer.emoji
+                        val colorName = dotPlayer.colorName
+                        if (player.isHost) "HOST • $emoji ${dotPlayer.displayName} ($colorName)" else "$emoji ${dotPlayer.displayName} ($colorName)"
+                    }
                     else -> {
                         val emoji = SnakesTokens.getEmoji(index)
                         if (player.isHost) "HOST • $emoji ${player.role}" else "$emoji ${player.role}"
                     }
+                }
+                val token = when {
+                    isDotConnections -> DotPlayer.getEmoji(index)
+                    else -> SnakesTokens.getEmoji(index)
                 }
                 PlayerItemRow(
                     name = player.name,
                     roleLabel = roleLabel,
                     isReady = true,
                     isHost = player.isHost,
-                    tokenEmoji = SnakesTokens.getEmoji(index)
+                    tokenEmoji = token
                 )
             }
 
@@ -442,7 +454,13 @@ private fun HostLobbyContent(
                 val emptySlots = maxPlayers - players.size
                 for (i in 1..emptySlots) {
                     val slotIndex = players.size + i - 1
-                    val slotEmoji = SnakesTokens.getEmoji(slotIndex)
+                    val slotEmoji = if (isDotConnections) DotPlayer.getEmoji(slotIndex) else SnakesTokens.getEmoji(slotIndex)
+                    val slotLabel = if (isDotConnections) {
+                        val dotPlayer = DotPlayer.fromOrdinal(slotIndex)
+                        "Slot ${slotIndex + 1} • ${dotPlayer.displayName} (${dotPlayer.colorName}) (Waiting for player...)"
+                    } else {
+                        "Slot ${slotIndex + 1} (Waiting for player...)"
+                    }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -455,7 +473,7 @@ private fun HostLobbyContent(
                             Text(text = slotEmoji, fontSize = 16.sp)
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Slot ${slotIndex + 1} (Waiting for player...)",
+                                text = slotLabel,
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                             )

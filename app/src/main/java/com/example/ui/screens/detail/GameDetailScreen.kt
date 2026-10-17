@@ -70,6 +70,7 @@ import com.example.core.engine.chess.ChessDifficulty
 import com.example.core.engine.chess.ChessPlayerColor
 import com.example.core.engine.dotconnections.DotBoardSize
 import com.example.core.engine.dotconnections.DotDifficulty
+import com.example.core.engine.dotconnections.DotPlayer
 import com.example.core.engine.xo.XOGameEngine
 import com.example.core.engine.xo.XOMove
 import com.example.core.engine.xo.XOState
@@ -119,6 +120,7 @@ fun GameDetailScreen(
     var archeryDifficulty by rememberSaveable { mutableStateOf(ArcheryDifficulty.MEDIUM) }
     var dotDifficulty by rememberSaveable { mutableStateOf(DotDifficulty.MEDIUM) }
     var dotBoardSize by rememberSaveable { mutableStateOf(DotBoardSize.MEDIUM) }
+    var dotPlayerCount by rememberSaveable { mutableIntStateOf(2) }
     var xoDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
     var snakesPlayerCount by rememberSaveable { mutableIntStateOf(2) }
     var targetScore by remember { mutableIntStateOf(game.defaultTargetScore) }
@@ -375,6 +377,8 @@ fun GameDetailScreen(
                 onDotDifficultySelected = { dotDifficulty = it },
                 dotBoardSize = dotBoardSize,
                 onDotBoardSizeSelected = { dotBoardSize = it },
+                dotPlayerCount = dotPlayerCount,
+                onDotPlayerCountSelected = { dotPlayerCount = it },
                 xoDifficulty = xoDifficulty,
                 onXoDifficultySelected = { xoDifficulty = it },
                 snakesPlayerCount = snakesPlayerCount,
@@ -397,6 +401,7 @@ fun GameDetailScreen(
                         selectedMode = selectedMode,
                         difficulty = dotDifficulty,
                         boardSize = dotBoardSize,
+                        initialPlayerCount = dotPlayerCount,
                         viewModel = viewModel,
                         onChangeMode = {
                             isPlaying = false
@@ -592,6 +597,8 @@ private fun CleanLaunchView(
     onDotDifficultySelected: (DotDifficulty) -> Unit = {},
     dotBoardSize: DotBoardSize = DotBoardSize.MEDIUM,
     onDotBoardSizeSelected: (DotBoardSize) -> Unit = {},
+    dotPlayerCount: Int = 2,
+    onDotPlayerCountSelected: (Int) -> Unit = {},
     xoDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
     onXoDifficultySelected: (BotDifficulty) -> Unit = {},
     snakesPlayerCount: Int = 2,
@@ -663,8 +670,8 @@ private fun CleanLaunchView(
         // Mode Options (clean, no paragraphs of text)
         val modes = listOf(
             GameMode.SOLO to "🤖 VS BOT",
-            GameMode.LOCAL_1V1 to if (game.id.equals("snakes_and_ladders", ignoreCase = true)) "👥 LOCAL (2-5 PLAYERS)" else "👥 2 PLAYERS",
-            GameMode.BLUETOOTH_1V1 to if (game.id.equals("snakes_and_ladders", ignoreCase = true)) "📱 NEARBY (2-5 PLAYERS)" else "📱 NEARBY"
+            GameMode.LOCAL_1V1 to if (game.id.equals("snakes_and_ladders", ignoreCase = true) || game.id.equals("dot_connections", ignoreCase = true)) "👥 LOCAL (2-5 PLAYERS)" else "👥 2 PLAYERS",
+            GameMode.BLUETOOTH_1V1 to if (game.id.equals("snakes_and_ladders", ignoreCase = true) || game.id.equals("dot_connections", ignoreCase = true)) "📱 NEARBY (2-5 PLAYERS)" else "📱 NEARBY"
         )
 
         modes.forEach { (mode, label) ->
@@ -966,6 +973,62 @@ private fun CleanLaunchView(
                                 ),
                                 color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
                             )
+                        }
+                    }
+                }
+            }
+
+            if (selectedMode == GameMode.LOCAL_1V1) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "PLAYER COUNT",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    (2..5).forEach { count ->
+                        val isSelected = dotPlayerCount == count
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(58.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (isSelected) accentColor else MaterialTheme.colorScheme.surface
+                                )
+                                .border(
+                                    width = if (isSelected) 2.5.dp else 1.5.dp,
+                                    color = if (isSelected) accentColor else colors.border,
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .bouncyClickable { onDotPlayerCountSelected(count) }
+                                .testTag("dot_player_count_$count"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "$count PLAYERS",
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = 0.5.sp
+                                    ),
+                                    fontSize = 11.sp,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = (0 until count).joinToString("") { DotPlayer.getEmoji(it) },
+                                    fontSize = 10.sp
+                                )
+                            }
                         }
                     }
                 }

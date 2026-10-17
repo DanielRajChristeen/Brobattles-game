@@ -2,13 +2,9 @@ package com.example.ui.screens.detail.dotconnections
 
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,6 +47,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.engine.dotconnections.DotBoardSize
@@ -57,6 +57,11 @@ import com.example.core.engine.dotconnections.DotDifficulty
 import com.example.core.engine.dotconnections.DotEdge
 import com.example.core.engine.dotconnections.DotMoveResult
 import com.example.core.engine.dotconnections.DotPlayer
+import com.example.core.engine.dotconnections.EdgeOrientation
+import com.example.core.engine.dotconnections.LinePlacement
+import com.example.core.engine.dotconnections.DotBox
+import com.example.core.engine.dotconnections.DotConnectionsGameState
+import com.example.core.multiplayer.MultiplayerLobbyState
 import com.example.core.registry.GameMode
 import com.example.ui.MainViewModel
 import com.example.ui.components.ChunkyButton
@@ -69,12 +74,15 @@ import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.PlayfulYellow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 @Composable
 fun DotConnectionsGameView(
     selectedMode: GameMode,
     difficulty: DotDifficulty = DotDifficulty.MEDIUM,
     boardSize: DotBoardSize = DotBoardSize.MEDIUM,
+    initialPlayerCount: Int = 2,
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
     onExit: () -> Unit,
@@ -85,18 +93,63 @@ fun DotConnectionsGameView(
     val settings by viewModel.settings.collectAsState()
     val colors = ChillTheme.colors
 
-    val engine = remember(boardSize) { DotConnectionsEngine(boardSize) }
-    var gameState by remember(boardSize) { mutableStateOf(engine.state) }
-
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
-    val isHost = (lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: true)
-    val localPlayer = if (isHost) DotPlayer.PLAYER_1 else DotPlayer.PLAYER_2
+
+    val isHost = (lobbyState as? MultiplayerLobbyState.InGame)?.isHost
+        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
+
+    // In Nearby mode, number of players is based on connected players (2 to 5)
+    val nearbyPlayers = (lobbyState as? MultiplayerLobbyState.InGame)?.players
+        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.players ?: emptyList())
+    val initialNearbyCount = if (nearbyPlayers.isNotEmpty()) nearbyPlayers.size else initialPlayerCount
+    var syncedPlayerCount by remember { mutableIntStateOf(initialNearbyCount.coerceIn(2, 5)) }
+
+    val activePlayerCount = when {
+        selectedMode == GameMode.SOLO -> 2
+        isNearbyMode -> syncedPlayerCount.coerceIn(2, 5)
+        else -> initialPlayerCount.coerceIn(2, 5)
+    }
+
+    val localPlayerRole = (lobbyState as? MultiplayerLobbyState.InGame)?.localPlayer?.role
+        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.localPlayer?.role ?: "PLAYER_1")
+    val localPlayer = if (isNearbyMode) {
+        DotPlayer.entries.firstOrNull { it.name.equals(localPlayerRole, ignoreCase = true) } ?: DotPlayer.PLAYER_1
+    } else {
+        DotPlayer.PLAYER_1
+    }
+
+    // Player custom display names map
+    val playerDisplayNames = remember { mutableStateMapOf<DotPlayer, String>() }
+
+    // Sync player display names from nearbyPlayers
+    LaunchedEffect(nearbyPlayers) {
+        if (isNearbyMode) {
+            nearbyPlayers.forEachIndexed { index, p ->
+                val playerEnum = DotPlayer.fromOrdinal(index)
+                if (p.name.isNotBlank()) {
+                    playerDisplayNames[playerEnum] = p.name
+                }
+            }
+        }
+    }
+
+    val engine = remember {
+        DotConnectionsEngine(boardSize, activePlayerCount)
+    }
+    var gameState by remember { mutableStateOf(engine.state) }
+
+    LaunchedEffect(boardSize, initialPlayerCount) {
+        if (!isNearbyMode) {
+            engine.resetGame(boardSize, initialPlayerCount)
+            gameState = engine.state
+        }
+    }
 
     var isBotThinking by remember { mutableStateOf(false) }
     var showExtraTurnBanner by remember { mutableStateOf(false) }
+    var extraTurnPlayer by remember { mutableStateOf<DotPlayer?>(null) }
     var matchRecorded by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
     var gameSessionId by remember { mutableIntStateOf(0) }
@@ -109,71 +162,193 @@ fun DotConnectionsGameView(
     }
 
     fun restartGame() {
-        engine.resetGame(boardSize)
+        engine.resetGame(boardSize, activePlayerCount)
         gameState = engine.state
         isBotThinking = false
         showExtraTurnBanner = false
+        extraTurnPlayer = null
         matchRecorded = false
         gameSessionId++
         vibrate()
+
+        if (isNearbyMode && isHost) {
+            multiplayerManager.sendAction("DOT_SYNC", serializeDotState(engine.state, playerDisplayNames))
+        }
     }
 
-    fun handleUserMove(edge: DotEdge, sendNetwork: Boolean = true) {
-        if (isBotThinking || gameState.isGameOver) return
-        if (selectedMode == GameMode.SOLO && gameState.activePlayer != DotPlayer.PLAYER_1) return
-        if (isNearbyMode && gameState.activePlayer != localPlayer) return
+    // Broadcasts authoritative state to all connected devices from host
+    fun broadcastState() {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.sendAction("DOT_SYNC", serializeDotState(gameState, playerDisplayNames))
+        }
+    }
 
-        val result = engine.makeMove(edge, gameState.activePlayer)
-        if (result is DotMoveResult.Success) {
-            gameState = result.newState
-            if (result.extraTurn) {
-                showExtraTurnBanner = true
-                vibrate(isBig = true)
-            } else {
-                showExtraTurnBanner = false
-                vibrate(isBig = false)
-            }
-            if (sendNetwork && isNearbyMode) {
-                multiplayerManager.sendAction("DOT_EDGE", "${edge.orientation.name},${edge.row},${edge.col}")
+    LaunchedEffect(nearbyPlayers.size) {
+        if (isNearbyMode && nearbyPlayers.size in 2..5) {
+            syncedPlayerCount = nearbyPlayers.size
+            if (isHost && engine.state.placedEdges.isEmpty()) {
+                engine.resetGame(boardSize, nearbyPlayers.size)
+                gameState = engine.state
+                broadcastState()
             }
         }
     }
 
-    // Listen for incoming actions in Nearby Mode for Dot Connections
-    LaunchedEffect(isNearbyMode) {
+    fun handleUserMove(edge: DotEdge) {
+        if (isBotThinking || gameState.isGameOver) return
+        if (selectedMode == GameMode.SOLO && gameState.activePlayer != DotPlayer.PLAYER_1) return
+        if (isNearbyMode && gameState.activePlayer != localPlayer) return
+        if (gameState.isEdgeOccupied(edge)) return
+
+        if (isNearbyMode) {
+            if (isHost) {
+                // Host makes authoritative move directly
+                val result = engine.makeMove(edge, DotPlayer.PLAYER_1)
+                if (result is DotMoveResult.Success) {
+                    gameState = result.newState
+                    if (result.extraTurn) {
+                        showExtraTurnBanner = true
+                        extraTurnPlayer = DotPlayer.PLAYER_1
+                        vibrate(isBig = true)
+                    } else {
+                        showExtraTurnBanner = false
+                        extraTurnPlayer = null
+                        vibrate(isBig = false)
+                    }
+                    broadcastState()
+                }
+            } else {
+                // Client requests move from authoritative host
+                val payload = JSONObject().apply {
+                    put("player", localPlayer.name)
+                    put("ori", edge.orientation.name)
+                    put("r", edge.row)
+                    put("c", edge.col)
+                }.toString()
+                multiplayerManager.sendAction("DOT_REQUEST_EDGE", payload)
+            }
+        } else {
+            // Local mode (2-5 players) or Solo mode
+            val result = engine.makeMove(edge, gameState.activePlayer)
+            if (result is DotMoveResult.Success) {
+                gameState = result.newState
+                if (result.extraTurn) {
+                    showExtraTurnBanner = true
+                    extraTurnPlayer = gameState.activePlayer
+                    vibrate(isBig = true)
+                } else {
+                    showExtraTurnBanner = false
+                    extraTurnPlayer = null
+                    vibrate(isBig = false)
+                }
+            }
+        }
+    }
+
+    // Listen for incoming actions in Nearby Mode
+    LaunchedEffect(isNearbyMode, isHost) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
-                    "DOT_EDGE" -> {
-                        val parts = action.payload.split(",")
-                        if (parts.size == 3) {
-                            val ori = runCatching { com.example.core.engine.dotconnections.EdgeOrientation.valueOf(parts[0]) }.getOrNull() ?: return@collect
-                            val r = parts[1].toIntOrNull() ?: return@collect
-                            val c = parts[2].toIntOrNull() ?: return@collect
-                            handleUserMove(DotEdge(ori, r, c), sendNetwork = false)
+                    "DOT_REQUEST_EDGE" -> {
+                        if (isHost) {
+                            try {
+                                val json = JSONObject(action.payload)
+                                val playerName = json.getString("player")
+                                val requestedPlayer = DotPlayer.valueOf(playerName)
+                                val ori = EdgeOrientation.valueOf(json.getString("ori"))
+                                val r = json.getInt("r")
+                                val c = json.getInt("c")
+                                val edge = DotEdge(ori, r, c)
+
+                                // Authoritative check on Host: player must be active and move must be legal
+                                if (requestedPlayer == gameState.activePlayer &&
+                                    !gameState.isGameOver &&
+                                    !gameState.isEdgeOccupied(edge)
+                                ) {
+                                    val result = engine.makeMove(edge, requestedPlayer)
+                                    if (result is DotMoveResult.Success) {
+                                        gameState = result.newState
+                                        if (result.extraTurn) {
+                                            showExtraTurnBanner = true
+                                            extraTurnPlayer = requestedPlayer
+                                            vibrate(isBig = true)
+                                        } else {
+                                            showExtraTurnBanner = false
+                                            extraTurnPlayer = null
+                                            vibrate(isBig = false)
+                                        }
+                                        broadcastState()
+                                    }
+                                } else {
+                                    // Invalid move or out-of-turn: re-broadcast authoritative state
+                                    broadcastState()
+                                }
+                            } catch (e: Exception) {
+                                // Ignore malformed action
+                            }
+                        }
+                    }
+                    "DOT_REQUEST_SYNC" -> {
+                        if (isHost) {
+                            broadcastState()
+                        }
+                    }
+                    "DOT_SYNC" -> {
+                        val parsed = deserializeDotState(action.payload)
+                        if (parsed != null) {
+                            val (syncedState, syncedNames) = parsed
+                            syncedPlayerCount = syncedState.playerCount
+                            engine.syncState(syncedState)
+                            gameState = syncedState
+                            syncedNames.forEach { (p, name) -> playerDisplayNames[p] = name }
+                            if (syncedState.lastCompletedBoxes.isNotEmpty()) {
+                                showExtraTurnBanner = true
+                                extraTurnPlayer = syncedState.activePlayer
+                                vibrate(isBig = true)
+                            } else {
+                                showExtraTurnBanner = false
+                                extraTurnPlayer = null
+                            }
                         }
                     }
                     "DOT_REMATCH" -> {
-                        engine.resetGame(boardSize)
+                        engine.resetGame(boardSize, activePlayerCount)
                         gameState = engine.state
                         isBotThinking = false
                         showExtraTurnBanner = false
+                        extraTurnPlayer = null
                         matchRecorded = false
                         gameSessionId++
                         vibrate()
+                        if (isHost) {
+                            broadcastState()
+                        }
                     }
                 }
             }
         }
     }
 
-    // Autonomous Bot in VS BOT mode: continues playing consecutively as long as it has turns
+    // Proactive initial sync on launch / reconnect
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode) {
+            if (isHost) {
+                delay(120)
+                broadcastState()
+            } else {
+                delay(150)
+                multiplayerManager.sendAction("DOT_REQUEST_SYNC", localPlayer.name)
+            }
+        }
+    }
+
+    // Autonomous Bot in VS BOT mode: continues playing consecutively as long as it earns extra turns
     LaunchedEffect(gameState.activePlayer, gameState.isGameOver, selectedMode, gameSessionId) {
         if (selectedMode != GameMode.SOLO) return@LaunchedEffect
 
         while (gameState.activePlayer == DotPlayer.PLAYER_2 && !gameState.isGameOver) {
             isBotThinking = true
-            // Natural thinking delay (420ms)
             delay(420)
             val botMove = DotConnectionsBot.decideMove(gameState, difficulty)
             if (botMove != null) {
@@ -182,12 +357,12 @@ fun DotConnectionsGameView(
                     gameState = result.newState
                     if (result.extraTurn) {
                         showExtraTurnBanner = true
+                        extraTurnPlayer = DotPlayer.PLAYER_2
                         vibrate(isBig = true)
-                        // Brief pause after completing a box so player can see the square animation
-                        // before the bot makes its next consecutive extra-turn move!
                         delay(400)
                     } else {
                         showExtraTurnBanner = false
+                        extraTurnPlayer = null
                         vibrate(isBig = false)
                     }
                 } else {
@@ -204,18 +379,19 @@ fun DotConnectionsGameView(
     LaunchedEffect(gameState.isGameOver) {
         if (gameState.isGameOver && !matchRecorded) {
             matchRecorded = true
-            val (winnerName, p1Score, p2Score) = when {
-                gameState.winner == DotPlayer.PLAYER_1 -> Triple("PLAYER_1", gameState.p1Score, gameState.p2Score)
-                gameState.winner == DotPlayer.PLAYER_2 -> Triple("PLAYER_2", gameState.p1Score, gameState.p2Score)
-                else -> Triple("DRAW", gameState.p1Score, gameState.p2Score)
+            val currentWinner = gameState.winner
+            val winnerName = when {
+                currentWinner != null -> currentWinner.name
+                gameState.isDraw -> "DRAW"
+                else -> "DRAW"
             }
 
             viewModel.repository.recordMatch(
                 gameId = "dot_connections",
                 gameTitle = "Dot Connections",
                 mode = selectedMode.name,
-                player1Score = p1Score,
-                player2Score = p2Score,
+                player1Score = gameState.getScore(DotPlayer.PLAYER_1),
+                player2Score = gameState.getScore(DotPlayer.PLAYER_2),
                 winner = winnerName,
                 durationSeconds = 90
             )
@@ -226,13 +402,31 @@ fun DotConnectionsGameView(
         onExit()
     }
 
+    fun getPlayerDisplayName(player: DotPlayer): String {
+        return when {
+            selectedMode == GameMode.SOLO -> {
+                if (player == DotPlayer.PLAYER_1) "YOU" else "BOT (${difficulty.title})"
+            }
+            isNearbyMode -> {
+                if (player == localPlayer) {
+                    "${playerDisplayNames[player] ?: player.displayName} (YOU)"
+                } else {
+                    playerDisplayNames[player] ?: player.displayName
+                }
+            }
+            else -> {
+                player.displayName
+            }
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 1. Top Controls Bar: Back, Title / Size, Help, Restart
+        // 1. Top Controls Bar: Back, Title / Grid Info, Help, Restart
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -265,7 +459,7 @@ fun DotConnectionsGameView(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "${boardSize.dots}×${boardSize.dots} GRID • ${boardSize.squaresCount} BOXES",
+                    text = "${boardSize.dots}×${boardSize.dots} GRID • $activePlayerCount PLAYERS",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                     color = colors.accent
                 )
@@ -308,70 +502,48 @@ fun DotConnectionsGameView(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // 2. Compact Score HUD
-        val p1Name = when {
-            selectedMode == GameMode.SOLO -> "YOU"
-            isNearbyMode -> if (localPlayer == DotPlayer.PLAYER_1) "YOU" else "OPPONENT"
-            else -> "PLAYER 1"
-        }
-        val p2Name = when {
-            selectedMode == GameMode.SOLO -> "BOT (${difficulty.title})"
-            isNearbyMode -> if (localPlayer == DotPlayer.PLAYER_2) "YOU" else "OPPONENT"
-            else -> "PLAYER 2"
-        }
-        val isP1Turn = gameState.activePlayer == DotPlayer.PLAYER_1 && !gameState.isGameOver
-        val isP2Turn = gameState.activePlayer == DotPlayer.PLAYER_2 && !gameState.isGameOver
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Player 1 Card
-            ScoreCard(
-                name = p1Name,
-                score = gameState.p1Score,
-                color = PlayfulOrange,
-                isTurn = isP1Turn,
-                modifier = Modifier.weight(1f)
-            )
-
-            // VS Indicator
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colors.surfaceVariant)
-                    .border(1.dp, colors.border, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "VS",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // Player 2 Card
-            ScoreCard(
-                name = p2Name,
-                score = gameState.p2Score,
-                color = PlayfulPurple,
-                isTurn = isP2Turn,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 3. Status Pill
+        // 2. Compact Scalable Player Scoreboard (2 to 5 players)
+        val participatingPlayers = gameState.participatingPlayers
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (participatingPlayers.size > 2) Modifier.horizontalScroll(rememberScrollState())
+                    else Modifier
+                ),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            participatingPlayers.forEach { player ->
+                val isTurn = gameState.activePlayer == player && !gameState.isGameOver
+                val isNext = gameState.activePlayer.next(gameState.playerCount) == player &&
+                    !gameState.isGameOver && participatingPlayers.size > 2
+                PlayerScoreCard(
+                    player = player,
+                    name = getPlayerDisplayName(player),
+                    score = gameState.getScore(player),
+                    isTurn = isTurn,
+                    isNext = isNext,
+                    modifier = if (participatingPlayers.size <= 2) Modifier.weight(1f) else Modifier.widthIn(min = 115.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 3. Status Pill: Highlights Active Player's Turn and indicates Next Player
+        val activePlayer = gameState.activePlayer
+        val nextPlayer = activePlayer.next(gameState.playerCount)
         when {
             gameState.isGameOver -> {
+                val currentWinner = gameState.winner
                 val winnerText = when {
-                    gameState.winner == DotPlayer.PLAYER_1 -> if (selectedMode == GameMode.SOLO) "YOU WON! 🏆" else "PLAYER 1 WON! 🏆"
-                    gameState.winner == DotPlayer.PLAYER_2 -> if (selectedMode == GameMode.SOLO) "BOT WON! 🤖" else "PLAYER 2 WON! 🏆"
+                    currentWinner != null -> {
+                        val winnerName = getPlayerDisplayName(currentWinner)
+                        "${currentWinner.emoji} $winnerName WON! 🏆"
+                    }
                     else -> "IT'S A DRAW! 🤝"
                 }
                 PlayfulPill(
@@ -380,16 +552,10 @@ fun DotConnectionsGameView(
                     textColor = Color(0xFFD97706)
                 )
             }
-            showExtraTurnBanner && gameState.activePlayer == DotPlayer.PLAYER_2 -> {
-                PlayfulPill(
-                    text = "BOT COMPLETED BOX! EXTRA TURN 🤖",
-                    backgroundColor = PlayfulPurple.copy(alpha = 0.18f),
-                    textColor = PlayfulPurple
-                )
-            }
             showExtraTurnBanner -> {
+                val playerLabel = extraTurnPlayer?.let { getPlayerDisplayName(it) } ?: "PLAYER"
                 PlayfulPill(
-                    text = "BOX COMPLETED! EXTRA TURN! 🎁",
+                    text = "${extraTurnPlayer?.emoji ?: "🎁"} $playerLabel COMPLETED BOX! EXTRA TURN! 🎁",
                     backgroundColor = PlayfulGreen.copy(alpha = 0.18f),
                     textColor = PlayfulGreen
                 )
@@ -403,38 +569,45 @@ fun DotConnectionsGameView(
             }
             selectedMode == GameMode.SOLO -> {
                 PlayfulPill(
-                    text = if (isP1Turn) "YOUR TURN • CONNECT 2 DOTS" else "BOT'S TURN",
-                    backgroundColor = if (isP1Turn) PlayfulOrange.copy(alpha = 0.14f) else PlayfulPurple.copy(alpha = 0.14f),
-                    textColor = if (isP1Turn) PlayfulOrange else PlayfulPurple
+                    text = if (activePlayer == DotPlayer.PLAYER_1) "YOUR TURN • CONNECT 2 DOTS" else "BOT'S TURN 🤖",
+                    backgroundColor = activePlayer.composeColor.copy(alpha = 0.14f),
+                    textColor = activePlayer.composeColor
                 )
             }
             isNearbyMode -> {
-                val isMyTurn = gameState.activePlayer == localPlayer
+                val isMyTurn = activePlayer == localPlayer
+                val turnText = if (isMyTurn) {
+                    "YOUR TURN (${activePlayer.displayName.uppercase()}) • NEXT: ${nextPlayer.displayName.uppercase()}"
+                } else {
+                    "${activePlayer.emoji} ${getPlayerDisplayName(activePlayer).uppercase()}'S TURN • NEXT: ${nextPlayer.displayName.uppercase()}"
+                }
                 PlayfulPill(
-                    text = if (isMyTurn) "YOUR TURN • CONNECT 2 DOTS" else "OPPONENT'S TURN 📱",
-                    backgroundColor = if (isMyTurn) PlayfulOrange.copy(alpha = 0.14f) else PlayfulPurple.copy(alpha = 0.14f),
-                    textColor = if (isMyTurn) PlayfulOrange else PlayfulPurple
+                    text = turnText,
+                    backgroundColor = activePlayer.composeColor.copy(alpha = 0.14f),
+                    textColor = activePlayer.composeColor
                 )
             }
             else -> {
+                val turnText = "${activePlayer.emoji} ${activePlayer.displayName.uppercase()}'S TURN • NEXT: ${nextPlayer.emoji} ${nextPlayer.displayName.uppercase()}"
                 PlayfulPill(
-                    text = if (isP1Turn) "PLAYER 1'S TURN (ORANGE)" else "PLAYER 2'S TURN (PURPLE)",
-                    backgroundColor = if (isP1Turn) PlayfulOrange.copy(alpha = 0.14f) else PlayfulPurple.copy(alpha = 0.14f),
-                    textColor = if (isP1Turn) PlayfulOrange else PlayfulPurple
+                    text = turnText,
+                    backgroundColor = activePlayer.composeColor.copy(alpha = 0.14f),
+                    textColor = activePlayer.composeColor
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // 4. Central Game Board
-        val isUserTurn = !gameState.isGameOver && !isBotThinking &&
-            (selectedMode != GameMode.SOLO || gameState.activePlayer == DotPlayer.PLAYER_1)
+        val isUserInteractive = !gameState.isGameOver && !isBotThinking &&
+            (selectedMode != GameMode.SOLO || gameState.activePlayer == DotPlayer.PLAYER_1) &&
+            (!isNearbyMode || gameState.activePlayer == localPlayer)
 
         DotConnectionsBoardView(
             state = gameState,
             onEdgeSelected = { handleUserMove(it) },
-            isInteractive = isUserTurn,
+            isInteractive = isUserInteractive,
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -447,12 +620,10 @@ fun DotConnectionsGameView(
             onDismissRequest = { showHelpDialog = false },
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surface,
-            icon = {
-                Text(text = "🔲", fontSize = 42.sp)
-            },
+            icon = { Text(text = "🔲", fontSize = 42.sp) },
             title = {
                 Text(
-                    text = "How to Play",
+                    text = "How to Play (2–5 Players)",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
@@ -461,23 +632,23 @@ fun DotConnectionsGameView(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "1. Connect two neighboring dots with a horizontal or vertical line.",
+                        text = "1. Connect two neighboring dots with a line. Players take turns in order (🔴 Red -> 🟣 Purple -> 🔵 Blue -> 🟤 Brown -> 🟢 Green).",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "2. Complete the 4th side of any square to claim that box and earn an EXTRA TURN!",
+                        text = "2. Complete the 4th side of any box to claim it and earn an EXTRA TURN! You can claim multiple boxes in a single move.",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = PlayfulGreen
                     )
                     Text(
-                        text = "3. If you don't complete a box, the turn passes to your opponent.",
+                        text = "3. If no box is completed, the turn passes to the next player.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "4. Claim the most boxes when the board is filled to win!",
+                        text = "4. Claim the most boxes when the grid is filled to win!",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -491,26 +662,20 @@ fun DotConnectionsGameView(
         )
     }
 
-    // End Game Dialog
+    // End Game Dialog with Player Rankings
     if (gameState.isGameOver) {
-        val didPlayer1Win = gameState.winner == DotPlayer.PLAYER_1
-        val isDraw = gameState.isDraw
+        val rankings = gameState.rankings
+        val isTie = gameState.isDraw
+        val winner = gameState.winner
 
         val titleText = when {
-            isDraw -> "🤝 IT'S A DRAW!"
-            selectedMode == GameMode.SOLO && didPlayer1Win -> "🏆 YOU WIN!"
+            isTie -> "🤝 IT'S A TIE!"
+            selectedMode == GameMode.SOLO && winner == DotPlayer.PLAYER_1 -> "🏆 YOU WIN!"
             selectedMode == GameMode.SOLO -> "🤖 BOT WINS!"
-            isNearbyMode && gameState.winner == localPlayer -> "🏆 YOU WIN!"
-            isNearbyMode -> "🏆 OPPONENT WINS!"
-            didPlayer1Win -> "🏆 PLAYER 1 WINS!"
-            else -> "🏆 PLAYER 2 WINS!"
-        }
-
-        val subtitleText = when {
-            isDraw -> "Equal squares claimed! Perfectly matched duel (${gameState.p1Score} — ${gameState.p2Score})."
-            selectedMode == GameMode.SOLO && didPlayer1Win -> "Masterful boxing strategy! You out-connected the bot (${gameState.p1Score} — ${gameState.p2Score})."
-            selectedMode == GameMode.SOLO -> "The bot secured more boxes this round (${gameState.p2Score} — ${gameState.p1Score}). Ready for revenge?"
-            else -> "Great match! Final score: ${gameState.p1Score} — ${gameState.p2Score}."
+            isNearbyMode && winner == localPlayer -> "🏆 YOU WIN!"
+            isNearbyMode && winner != null -> "🏆 ${getPlayerDisplayName(winner).uppercase()} WINS!"
+            winner != null -> "🏆 ${winner.displayName.uppercase()} WINS!"
+            else -> "MATCH COMPLETE"
         }
 
         AlertDialog(
@@ -519,7 +684,7 @@ fun DotConnectionsGameView(
             containerColor = MaterialTheme.colorScheme.surface,
             icon = {
                 Text(
-                    text = if (isDraw) "🤝" else if (didPlayer1Win) "🏆" else "🤖",
+                    text = if (isTie) "🤝" else "🏆",
                     fontSize = 44.sp
                 )
             },
@@ -538,60 +703,76 @@ fun DotConnectionsGameView(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = subtitleText,
+                        text = if (isTie) "Equally matched scores! Multiple players tied for 1st place."
+                        else "All boxes claimed! Final player rankings:",
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Row(
+                    // Final Player Rankings List
+                    Column(
                         modifier = Modifier
+                            .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
                             .background(colors.surfaceVariant)
-                            .padding(horizontal = 20.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            val p1DialogLabel = when {
-                                selectedMode == GameMode.SOLO -> "YOU"
-                                isNearbyMode -> if (localPlayer == DotPlayer.PLAYER_1) "YOU" else "OPPONENT"
-                                else -> "P1"
+                        rankings.forEachIndexed { rankIndex, (player, score) ->
+                            val isWinner = !isTie && rankIndex == 0
+                            val medal = when (rankIndex) {
+                                0 -> if (isTie) "🤝" else "🥇"
+                                1 -> "🥈"
+                                2 -> "🥉"
+                                else -> "${rankIndex + 1}."
                             }
-                            Text(
-                                text = p1DialogLabel,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = PlayfulOrange
-                            )
-                            Text(
-                                text = "${gameState.p1Score}",
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
 
-                        Text(
-                            text = "—",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (isWinner) player.composeColor.copy(alpha = 0.15f)
+                                        else Color.Transparent
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = medal,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .clip(CircleShape)
+                                            .background(player.composeColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = getPlayerDisplayName(player),
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontWeight = if (isWinner) FontWeight.Black else FontWeight.Bold
+                                        ),
+                                        color = if (isWinner) player.composeColor else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
 
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            val p2DialogLabel = when {
-                                selectedMode == GameMode.SOLO -> "BOT"
-                                isNearbyMode -> if (localPlayer == DotPlayer.PLAYER_2) "YOU" else "OPPONENT"
-                                else -> "P2"
+                                Text(
+                                    text = "$score ${if (score == 1) "box" else "boxes"}",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
                             }
-                            Text(
-                                text = p2DialogLabel,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = PlayfulPurple
-                            )
-                            Text(
-                                text = "${gameState.p2Score}",
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
                         }
                     }
                 }
@@ -623,48 +804,113 @@ fun DotConnectionsGameView(
             }
         )
     }
+
+    // Nearby Mode Disconnected Alert Dialog
+    if (isNearbyMode && lobbyState is MultiplayerLobbyState.Disconnected) {
+        val reason = (lobbyState as MultiplayerLobbyState.Disconnected).reason
+        AlertDialog(
+            onDismissRequest = { /* user must choose an action */ },
+            shape = RoundedCornerShape(26.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = { Text("🔌", fontSize = 42.sp) },
+            title = {
+                Text(
+                    text = "Connection Lost",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = reason.ifBlank { "Lost connection to the session. The multiplayer game has ended." },
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                ChunkyButton(
+                    text = "Back to Modes 🎮",
+                    onClick = {
+                        multiplayerManager.disconnect()
+                        onChangeMode()
+                    },
+                    backgroundColor = PlayfulPurple,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        multiplayerManager.disconnect()
+                        onExit()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Exit to Home 🏠", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
 }
 
 @Composable
-private fun ScoreCard(
+private fun PlayerScoreCard(
+    player: DotPlayer,
     name: String,
     score: Int,
-    color: Color,
     isTurn: Boolean,
+    isNext: Boolean,
     modifier: Modifier = Modifier
 ) {
     val colors = ChillTheme.colors
+    val playerColor = player.composeColor
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (isTurn) color.copy(alpha = 0.14f) else colors.surfaceVariant)
-            .border(
-                width = if (isTurn) 2.5.dp else 1.dp,
-                color = if (isTurn) color else colors.border,
-                shape = RoundedCornerShape(18.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (isTurn) playerColor.copy(alpha = 0.16f)
+                else colors.surfaceVariant
             )
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .border(
+                width = if (isTurn) 2.5.dp else if (isNext) 1.5.dp else 1.dp,
+                color = if (isTurn) playerColor
+                else if (isNext) playerColor.copy(alpha = 0.5f)
+                else colors.border,
+                shape = RoundedCornerShape(16.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(color)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
-                        color = if (isTurn) color else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(playerColor)
+                )
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
+                    color = if (isTurn) playerColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (isTurn) {
                     Text(
                         text = "TURN 🎯",
@@ -672,16 +918,167 @@ private fun ScoreCard(
                             fontWeight = FontWeight.Black,
                             letterSpacing = 0.5.sp
                         ),
-                        color = color
+                        fontSize = 10.sp,
+                        color = playerColor
+                    )
+                } else if (isNext) {
+                    Text(
+                        text = "NEXT ⏱️",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        fontSize = 9.sp,
+                        color = playerColor.copy(alpha = 0.8f)
+                    )
+                } else {
+                    Text(
+                        text = player.symbol,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
                 }
-            }
 
-            Text(
-                text = "$score",
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
-                color = MaterialTheme.colorScheme.onSurface
-            )
+                Text(
+                    text = "$score",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
         }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Authoritative JSON State Serialization and Deserialization for Nearby Sync
+// -------------------------------------------------------------------------
+
+internal fun serializeDotState(
+    state: DotConnectionsGameState,
+    playerNames: Map<DotPlayer, String> = emptyMap()
+): String {
+    val json = JSONObject()
+    json.put("boardSize", state.boardSize.name)
+    json.put("playerCount", state.playerCount)
+    json.put("activePlayer", state.activePlayer.name)
+    json.put("extraTurn", state.lastCompletedBoxes.isNotEmpty())
+    json.put("isGameOver", state.isGameOver)
+    json.put("winner", state.winner?.name ?: "")
+    json.put("isDraw", state.isDraw)
+    json.put("lastEdge", state.lastMoveEdge?.let { "${it.orientation.name},${it.row},${it.col}" } ?: "")
+
+    val edgesArray = JSONArray()
+    for ((edge, placement) in state.placedEdges) {
+        val edgeObj = JSONObject()
+        edgeObj.put("ori", edge.orientation.name)
+        edgeObj.put("r", edge.row)
+        edgeObj.put("c", edge.col)
+        edgeObj.put("owner", placement.owner.name)
+        edgesArray.put(edgeObj)
+    }
+    json.put("edges", edgesArray)
+
+    val boxesArray = JSONArray()
+    for ((coord, box) in state.boxes) {
+        val boxObj = JSONObject()
+        boxObj.put("r", coord.first)
+        boxObj.put("c", coord.second)
+        boxObj.put("owner", box.owner?.name ?: "")
+        boxesArray.put(boxObj)
+    }
+    json.put("boxes", boxesArray)
+
+    val scoresObj = JSONObject()
+    for (player in state.participatingPlayers) {
+        scoresObj.put(player.name, state.getScore(player))
+    }
+    json.put("scores", scoresObj)
+
+    val namesObj = JSONObject()
+    for ((player, name) in playerNames) {
+        namesObj.put(player.name, name)
+    }
+    json.put("names", namesObj)
+
+    return json.toString()
+}
+
+internal fun deserializeDotState(jsonString: String): Pair<DotConnectionsGameState, Map<DotPlayer, String>>? {
+    return try {
+        val json = JSONObject(jsonString)
+        val boardSize = DotBoardSize.valueOf(json.getString("boardSize"))
+        val playerCount = json.optInt("playerCount", 2).coerceIn(2, 5)
+        val activePlayer = DotPlayer.valueOf(json.getString("activePlayer"))
+        val isGameOver = json.getBoolean("isGameOver")
+        val winnerStr = json.optString("winner", "")
+        val winner = if (winnerStr.isNotBlank()) DotPlayer.valueOf(winnerStr) else null
+        val isDraw = json.optBoolean("isDraw", false)
+
+        val lastEdgeStr = json.optString("lastEdge", "")
+        val lastEdge = if (lastEdgeStr.isNotBlank()) {
+            val parts = lastEdgeStr.split(",")
+            if (parts.size == 3) {
+                DotEdge(EdgeOrientation.valueOf(parts[0]), parts[1].toInt(), parts[2].toInt())
+            } else null
+        } else null
+
+        val placedEdges = mutableMapOf<DotEdge, LinePlacement>()
+        val edgesArray = json.getJSONArray("edges")
+        for (i in 0 until edgesArray.length()) {
+            val obj = edgesArray.getJSONObject(i)
+            val ori = EdgeOrientation.valueOf(obj.getString("ori"))
+            val r = obj.getInt("r")
+            val c = obj.getInt("c")
+            val owner = DotPlayer.valueOf(obj.getString("owner"))
+            val edge = DotEdge(ori, r, c)
+            placedEdges[edge] = LinePlacement(edge, owner)
+        }
+
+        val boxes = mutableMapOf<Pair<Int, Int>, DotBox>()
+        val boxesArray = json.getJSONArray("boxes")
+        for (i in 0 until boxesArray.length()) {
+            val obj = boxesArray.getJSONObject(i)
+            val r = obj.getInt("r")
+            val c = obj.getInt("c")
+            val ownerStr = obj.optString("owner", "")
+            val owner = if (ownerStr.isNotBlank()) DotPlayer.valueOf(ownerStr) else null
+            boxes[Pair(r, c)] = DotBox(r, c, owner)
+        }
+
+        val scores = mutableMapOf<DotPlayer, Int>()
+        val scoresObj = json.optJSONObject("scores")
+        if (scoresObj != null) {
+            for (player in DotPlayer.activePlayers(playerCount)) {
+                scores[player] = scoresObj.optInt(player.name, 0)
+            }
+        }
+
+        val playerNames = mutableMapOf<DotPlayer, String>()
+        val namesObj = json.optJSONObject("names")
+        if (namesObj != null) {
+            for (player in DotPlayer.activePlayers(playerCount)) {
+                val n = namesObj.optString(player.name, "")
+                if (n.isNotBlank()) playerNames[player] = n
+            }
+        }
+
+        val p1 = scores[DotPlayer.PLAYER_1] ?: 0
+        val p2 = scores[DotPlayer.PLAYER_2] ?: 0
+
+        val state = DotConnectionsGameState(
+            boardSize = boardSize,
+            playerCount = playerCount,
+            placedEdges = placedEdges,
+            boxes = boxes,
+            activePlayer = activePlayer,
+            playerScores = scores,
+            p1Score = p1,
+            p2Score = p2,
+            lastMoveEdge = lastEdge,
+            isGameOver = isGameOver,
+            winner = winner,
+            isDraw = isDraw
+        )
+        Pair(state, playerNames)
+    } catch (e: Exception) {
+        null
     }
 }

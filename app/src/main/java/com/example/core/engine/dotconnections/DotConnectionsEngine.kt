@@ -14,13 +14,18 @@ sealed interface DotMoveResult {
 }
 
 class DotConnectionsEngine(
-    initialBoardSize: DotBoardSize = DotBoardSize.MEDIUM
+    initialBoardSize: DotBoardSize = DotBoardSize.MEDIUM,
+    val initialPlayerCount: Int = 2
 ) {
-    var state: DotConnectionsGameState = DotConnectionsGameState.initial(initialBoardSize)
+    var state: DotConnectionsGameState = DotConnectionsGameState.initial(initialBoardSize, initialPlayerCount)
         private set
 
-    fun resetGame(boardSize: DotBoardSize = state.boardSize) {
-        state = DotConnectionsGameState.initial(boardSize)
+    fun resetGame(boardSize: DotBoardSize = state.boardSize, playerCount: Int = state.playerCount) {
+        state = DotConnectionsGameState.initial(boardSize, playerCount)
+    }
+
+    fun syncState(newState: DotConnectionsGameState) {
+        this.state = newState
     }
 
     fun makeMove(edge: DotEdge, player: DotPlayer = state.activePlayer): DotMoveResult {
@@ -58,26 +63,30 @@ class DotConnectionsEngine(
         }
 
         val addedBoxes = newlyCompleted.size
-        val newP1Score = state.p1Score + if (player == DotPlayer.PLAYER_1) addedBoxes else 0
-        val newP2Score = state.p2Score + if (player == DotPlayer.PLAYER_2) addedBoxes else 0
+        val newScores = state.playerScores.toMutableMap()
+        val curScore = newScores[player] ?: 0
+        newScores[player] = curScore + addedBoxes
+
+        val newP1Score = newScores[DotPlayer.PLAYER_1] ?: 0
+        val newP2Score = newScores[DotPlayer.PLAYER_2] ?: 0
 
         val extraTurn = addedBoxes > 0
-        val nextPlayer = if (extraTurn) player else player.opponent()
+        val nextPlayer = if (extraTurn) player else player.next(state.playerCount)
 
-        val isGameOver = newBoxes.size >= state.totalSquares
-        val winner = if (isGameOver) {
-            when {
-                newP1Score > newP2Score -> DotPlayer.PLAYER_1
-                newP2Score > newP1Score -> DotPlayer.PLAYER_2
-                else -> null
-            }
-        } else null
-        val isDraw = isGameOver && newP1Score == newP2Score
+        val isGameOver = newBoxes.size >= state.totalSquares || newPlacedEdges.size >= state.totalEdges
+
+        val activePlayers = state.participatingPlayers
+        val rankings = activePlayers.map { it to (newScores[it] ?: 0) }.sortedByDescending { it.second }
+        val maxScore = rankings.firstOrNull()?.second ?: 0
+        val topScorers = rankings.filter { it.second == maxScore }
+        val isDraw = isGameOver && topScorers.size > 1
+        val winner = if (isGameOver && topScorers.size == 1) topScorers.first().first else null
 
         val newState = state.copy(
             placedEdges = newPlacedEdges,
             boxes = newBoxes,
             activePlayer = nextPlayer,
+            playerScores = newScores,
             p1Score = newP1Score,
             p2Score = newP2Score,
             lastMoveEdge = edge,
