@@ -351,7 +351,11 @@ object ChessRules {
         }
     }
 
-    fun applyMove(state: ChessGameState, move: ChessMove): ChessGameState {
+    fun applyMove(
+        state: ChessGameState,
+        move: ChessMove,
+        evaluateFullStatus: Boolean = true
+    ): ChessGameState {
         val newBoard = state.copyBoard()
         val movingPiece = newBoard[move.from.index] ?: return state
         val capturedByWhite = state.capturedByWhite.toMutableList()
@@ -456,14 +460,17 @@ object ChessRules {
             lastMove = move
         )
 
-        val nextLegalMoves = generateLegalMoves(nextTempState)
-
-        val finalStatus = when {
-            nextLegalMoves.isEmpty() && nextInCheck -> ChessGameStatus.Checkmate(winner = state.activeColor)
-            nextLegalMoves.isEmpty() && !nextInCheck -> ChessGameStatus.Stalemate
-            newHalfmove >= 100 -> ChessGameStatus.DrawByFiftyMoves
-            isInsufficientMaterial(newBoard) -> ChessGameStatus.DrawByInsufficientMaterial
-            else -> ChessGameStatus.InProgress
+        val finalStatus = if (evaluateFullStatus) {
+            val nextLegalMoves = generateLegalMoves(nextTempState)
+            when {
+                nextLegalMoves.isEmpty() && nextInCheck -> ChessGameStatus.Checkmate(winner = state.activeColor)
+                nextLegalMoves.isEmpty() && !nextInCheck -> ChessGameStatus.Stalemate
+                newHalfmove >= 100 -> ChessGameStatus.DrawByFiftyMoves
+                isInsufficientMaterial(newBoard) -> ChessGameStatus.DrawByInsufficientMaterial
+                else -> ChessGameStatus.InProgress
+            }
+        } else {
+            if (newHalfmove >= 100) ChessGameStatus.DrawByFiftyMoves else ChessGameStatus.InProgress
         }
 
         return nextTempState.copy(status = finalStatus)

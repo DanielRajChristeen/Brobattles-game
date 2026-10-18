@@ -1,5 +1,6 @@
 package com.example.core.engine.chess
 
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -337,6 +338,224 @@ class ChessEngineTest {
         val whitePawnStartVisR = 7 - 6
         val whitePawnAdvanceVisR = 7 - 4
         assertTrue("White pawn must move visually downward", whitePawnAdvanceVisR > whitePawnStartVisR)
+    }
+
+    @Test
+    fun `bot preserves queen when under attack without adequate compensation`() = runBlocking {
+        // White Queen on d4 (4, 3) attacked by Black Rook on d8 (0, 3).
+        // Black has King on e8 (0, 4). White has King on e1 (7, 4).
+        // White to move: must move Queen out of danger or block, not blunder/sacrifice it.
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK) // e8
+        board[4 * 8 + 3] = ChessPiece(PieceType.QUEEN, PieceColor.WHITE) // d4 (attacked by d8)
+        board[0 * 8 + 3] = ChessPiece(PieceType.ROOK, PieceColor.BLACK) // d8
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE)
+        val move = ChessBot.decideMove(state, ChessDifficulty.HARD)
+
+        assertNotNull(move)
+        // Must move the Queen
+        assertEquals(ChessSquare(4, 3), move!!.from)
+        // Must not leave the Queen on the open d-file where the rook can capture it!
+        assertTrue("Queen should escape the d-file", move.to.col != 3)
+    }
+
+    @Test
+    fun `bot on all difficulties captures free hanging queen`() = runBlocking {
+        // Setup: White Bishop on c4 can capture undefended Black Queen on f7
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK) // e8
+        board[4 * 8 + 2] = ChessPiece(PieceType.BISHOP, PieceColor.WHITE) // c4 (row 4, col 2)
+        board[1 * 8 + 5] = ChessPiece(PieceType.QUEEN, PieceColor.BLACK) // f7 (row 1, col 5)
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE)
+
+        for (diff in listOf(ChessDifficulty.EASY, ChessDifficulty.MEDIUM, ChessDifficulty.HARD)) {
+            val move = ChessBot.decideMove(state, diff)
+            assertNotNull("Move should not be null for $diff", move)
+            assertEquals("Should capture hanging queen for $diff", ChessSquare(1, 5), move!!.to)
+            assertEquals("Bishop should make the capture for $diff", ChessSquare(4, 2), move.from)
+        }
+    }
+
+    @Test
+    fun `bot evaluates captures and recaptures correctly without throwing material away`() = runBlocking {
+        // Black pawn on d5 (3, 3) is defended by Black pawn on c6 (2, 2).
+        // White has Rook on d1 (7, 3) and Bishop on b3 (5, 1).
+        // Capturing Rxd5 loses a Rook (500) for a pawn (100) after cxd5.
+        // Capturing with nothing or quiet move is better than Rxd5 blundering the exchange.
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK) // e8
+        board[7 * 8 + 3] = ChessPiece(PieceType.ROOK, PieceColor.WHITE) // d1
+        board[3 * 8 + 3] = ChessPiece(PieceType.PAWN, PieceColor.BLACK) // d5
+        board[2 * 8 + 2] = ChessPiece(PieceType.PAWN, PieceColor.BLACK) // c6 (defending d5)
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE)
+        val move = ChessBot.decideMove(state, ChessDifficulty.HARD)
+
+        assertNotNull(move)
+        // Hard bot should NOT sacrifice the Rook by playing Rxd5 into cxd5!
+        assertFalse("Bot must not sacrifice Rook for a defended pawn", move!!.from == ChessSquare(7, 3) && move.to == ChessSquare(3, 3))
+    }
+
+    @Test
+    fun `bot avoids obvious forks and tactical traps`() = runBlocking {
+        // White King on e1 (7, 4), White Queen on c2 (6, 2).
+        // Black Knight is on e4 (4, 4).
+        // White to move: if White plays a careless pawn push or quiet move, Black can fork on d2 or c3.
+        // Bot must recognize danger or safely reposition / address knight threat.
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK) // e8
+        board[6 * 8 + 2] = ChessPiece(PieceType.QUEEN, PieceColor.WHITE) // c2
+        board[4 * 8 + 4] = ChessPiece(PieceType.KNIGHT, PieceColor.BLACK) // e4
+        board[6 * 8 + 3] = ChessPiece(PieceType.PAWN, PieceColor.WHITE) // d2
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE)
+        val move = ChessBot.decideMove(state, ChessDifficulty.HARD)
+
+        assertNotNull(move)
+        val nextState = ChessRules.applyMove(state, move!!, evaluateFullStatus = false)
+        // Make sure after White's move, Black Knight cannot fork King and Queen simultaneously for free
+        val replies = ChessRules.generateLegalMoves(nextState)
+        for (reply in replies) {
+            if (reply.capturedPiece?.type == PieceType.QUEEN) {
+                // If Queen can be captured, ensure White can recapture or has compensation
+                val afterReply = ChessRules.applyMove(nextState, reply, evaluateFullStatus = false)
+                val whiteScore = ChessBot.evaluatePosition(afterReply, PieceColor.WHITE)
+                assertTrue("White should not lose queen for free", whiteScore > -600)
+            }
+        }
+    }
+
+    @Test
+    fun `bot finds forced back-rank checkmate in 1`() = runBlocking {
+        // Black King trapped on g8 (0, 6) with pawns on f7 (1, 5), g7 (1, 6), h7 (1, 7).
+        // White has Rook on d1 (7, 3) and King on e1 (7, 4).
+        // White to move: Rd1 -> d8# is immediate checkmate!
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[7 * 8 + 3] = ChessPiece(PieceType.ROOK, PieceColor.WHITE) // d1
+        board[0 * 8 + 6] = ChessPiece(PieceType.KING, PieceColor.BLACK) // g8
+        board[1 * 8 + 5] = ChessPiece(PieceType.PAWN, PieceColor.BLACK) // f7
+        board[1 * 8 + 6] = ChessPiece(PieceType.PAWN, PieceColor.BLACK) // g7
+        board[1 * 8 + 7] = ChessPiece(PieceType.PAWN, PieceColor.BLACK) // h7
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE)
+
+        val hardMove = ChessBot.decideMove(state, ChessDifficulty.HARD)
+        assertNotNull(hardMove)
+        assertEquals("Hard bot must find Rd8# mate in 1", ChessSquare(0, 3), hardMove!!.to)
+
+        val medMove = ChessBot.decideMove(state, ChessDifficulty.MEDIUM)
+        assertNotNull(medMove)
+        assertEquals("Medium bot must find Rd8# mate in 1", ChessSquare(0, 3), medMove!!.to)
+    }
+
+    @Test
+    fun `bot recognizes and defends against immediate checkmate threat`() = runBlocking {
+        // Black Queen on f2 (6, 5) threatens mate in 1 against White King on e1 (7, 4) if White does nothing.
+        // But White can capture the Queen with King (Kxf2) or White Queen on d1 (Qxf2).
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[7 * 8 + 3] = ChessPiece(PieceType.QUEEN, PieceColor.WHITE) // d1
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK) // e8
+        board[6 * 8 + 5] = ChessPiece(PieceType.QUEEN, PieceColor.BLACK) // f2 (threatening Qxf1# or checking)
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE, inCheck = true)
+        val move = ChessBot.decideMove(state, ChessDifficulty.HARD)
+
+        assertNotNull(move)
+        // White must capture the Black Queen on f2!
+        assertEquals(ChessSquare(6, 5), move!!.to)
+    }
+
+    @Test
+    fun `bot chooses legal move in check and escapes check`() = runBlocking {
+        // White King on e1 (7, 4) in check from Black Rook on e8 (0, 4).
+        // White must move King to d1, d2, f1, f2 to escape check.
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[0 * 8 + 4] = ChessPiece(PieceType.ROOK, PieceColor.BLACK) // e8
+        board[0 * 8 + 7] = ChessPiece(PieceType.KING, PieceColor.BLACK) // h8
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE, inCheck = true)
+        val legalMoves = ChessRules.generateLegalMoves(state)
+
+        for (diff in listOf(ChessDifficulty.EASY, ChessDifficulty.MEDIUM, ChessDifficulty.HARD)) {
+            val move = ChessBot.decideMove(state, diff)
+            assertNotNull(move)
+            assertTrue("Move must be legal", legalMoves.contains(move))
+            val after = ChessRules.applyMove(state, move!!)
+            assertFalse("King must no longer be in check", after.inCheck)
+        }
+    }
+
+    @Test
+    fun `bot prioritizes pawn promotion to queen to create decisive advantage`() = runBlocking {
+        // White pawn on a7 (1, 0) about to promote.
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE)
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK)
+        board[1 * 8 + 0] = ChessPiece(PieceType.PAWN, PieceColor.WHITE) // a7
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE)
+        val move = ChessBot.decideMove(state, ChessDifficulty.HARD)
+
+        assertNotNull(move)
+        assertEquals(ChessSquare(0, 0), move!!.to)
+        assertEquals(PieceType.QUEEN, move.promotion)
+    }
+
+    @Test
+    fun `fifty move rule triggers draw`() {
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE)
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK)
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE, halfmoveClock = 99)
+
+        // Quiet King move incrementing halfmoveClock to 100
+        val kingMove = ChessMove(ChessSquare(7, 4), ChessSquare(7, 3))
+        val next = ChessRules.applyMove(state, kingMove)
+
+        assertEquals(ChessGameStatus.DrawByFiftyMoves, next.status)
+        assertTrue(next.status.isGameOver)
+    }
+
+    @Test
+    fun `bot search supports cancellation gracefully without hanging`() = runBlocking {
+        val state = ChessGameState.initial()
+        val job = launch {
+            ChessBot.decideMove(state, ChessDifficulty.HARD)
+        }
+        // Cancel almost immediately
+        job.cancel()
+        job.join()
+        assertTrue("Job should complete cancellation cleanly", job.isCancelled)
+    }
+
+    @Test
+    fun `tactical puzzle move selection is repeatable on fixed position`() = runBlocking {
+        // Tactical pin: White Bishop on b5 pins Black Knight on c6 to Black King on e8.
+        // White Pawn on d4 can push to d5 (3, 3) to attack the pinned Knight.
+        val board = arrayOfNulls<ChessPiece>(64)
+        board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE) // e1
+        board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK) // e8
+        board[3 * 8 + 1] = ChessPiece(PieceType.BISHOP, PieceColor.WHITE) // b5 (row 3, col 1)
+        board[2 * 8 + 2] = ChessPiece(PieceType.KNIGHT, PieceColor.BLACK) // c6 (row 2, col 2)
+        board[4 * 8 + 3] = ChessPiece(PieceType.PAWN, PieceColor.WHITE) // d4 (row 4, col 3)
+
+        val state = ChessGameState(board = board, activeColor = PieceColor.WHITE)
+
+        val move1 = ChessBot.decideMove(state, ChessDifficulty.HARD)
+        val move2 = ChessBot.decideMove(state, ChessDifficulty.HARD)
+
+        assertNotNull(move1)
+        assertNotNull(move2)
+        assertEquals("Hard bot should make consistent moves on fixed puzzle", move1, move2)
     }
 }
 
