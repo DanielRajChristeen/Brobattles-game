@@ -49,6 +49,7 @@ import com.example.ui.theme.ToyboxBorder
 
 @Composable
 fun HomeScreen(
+    username: String = "Player",
     onNavigateToGame: (String) -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToStats: () -> Unit
@@ -78,6 +79,7 @@ fun HomeScreen(
             // Ultra-simple Header (full width span)
             item(span = { GridItemSpan(2) }) {
                 PlayfulSimpleHeader(
+                    username = username,
                     onNavigateToSettings = onNavigateToSettings,
                     onNavigateToStats = onNavigateToStats
                 )
@@ -145,6 +147,7 @@ fun HomeScreen(
 
 @Composable
 private fun PlayfulSimpleHeader(
+    username: String = "Player",
     onNavigateToSettings: () -> Unit,
     onNavigateToStats: () -> Unit
 ) {
@@ -172,13 +175,15 @@ private fun PlayfulSimpleHeader(
                 )
             }
             Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "No Internet. Just Rivalry.",
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontWeight = FontWeight.Bold
-                ),
-                color = PlayfulPurple
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (username.isNotBlank() && username != "Player") "Ready, $username!" else "No Internet. Just Rivalry.",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = PlayfulPurple
+                )
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

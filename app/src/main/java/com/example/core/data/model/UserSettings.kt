@@ -9,5 +9,6 @@ data class UserSettings(
     val soundEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val themeMode: String = "SYSTEM", // "SYSTEM", "LIGHT", "DARK"
-    val defaultTargetScore: Int = 5
+    val defaultTargetScore: Int = 5,
+    val username: String = "Player"
 )

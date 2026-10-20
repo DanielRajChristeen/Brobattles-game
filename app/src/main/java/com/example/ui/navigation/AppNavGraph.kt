@@ -1,6 +1,8 @@
 package com.example.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -17,12 +19,15 @@ fun AppNavGraph(
     navController: NavHostController,
     viewModel: MainViewModel
 ) {
+    val settings by viewModel.settings.collectAsState()
+
     NavHost(
         navController = navController,
         startDestination = NavRoutes.HOME
     ) {
         composable(NavRoutes.HOME) {
             HomeScreen(
+                username = settings.username,
                 onNavigateToGame = { gameId ->
                     navController.navigate(NavRoutes.gameDetail(gameId))
                 },

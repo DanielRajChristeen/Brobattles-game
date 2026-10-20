@@ -482,6 +482,7 @@ fun GameDetailScreen(
                         gameState = gameState,
                         selectedMode = selectedMode,
                         localPlayerId = if (isNearbyMode) localPlayerId else null,
+                        username = settings.username,
                         isBotThinking = isBotThinking,
                         onMove = { handleMove(it) },
                         onNextRound = {
@@ -551,6 +552,7 @@ fun GameDetailScreen(
                 game = game,
                 manager = multiplayerManager,
                 targetScore = targetScore,
+                username = settings.username,
                 onDismiss = { showNearbyDialog = false },
                 onGameStarted = {
                     showNearbyDialog = false
@@ -1213,6 +1215,7 @@ private fun CleanXOPlayView(
     gameState: XOState,
     selectedMode: GameMode,
     localPlayerId: PlayerId? = null,
+    username: String = "Player",
     isBotThinking: Boolean,
     onMove: (XOMove) -> Unit,
     onNextRound: () -> Unit,
@@ -1310,9 +1313,9 @@ private fun CleanXOPlayView(
                 // P1
                 Column(horizontalAlignment = Alignment.Start) {
                     val p1Label = when {
-                        selectedMode == GameMode.SOLO -> "YOU ❌"
-                        selectedMode == GameMode.BLUETOOTH_1V1 -> if (localPlayerId == PlayerId.PLAYER_1) "YOU ❌" else "OPPONENT ❌"
-                        else -> "PLAYER 1 ❌"
+                        selectedMode == GameMode.SOLO -> "$username (YOU) ❌"
+                        selectedMode == GameMode.BLUETOOTH_1V1 -> if (localPlayerId == PlayerId.PLAYER_1) "$username (YOU) ❌" else "OPPONENT ❌"
+                        else -> "$username ❌"
                     }
                     Text(
                         text = p1Label,
@@ -1341,7 +1344,7 @@ private fun CleanXOPlayView(
                 Column(horizontalAlignment = Alignment.End) {
                     val p2Label = when {
                         selectedMode == GameMode.SOLO -> "BOT ⭕"
-                        selectedMode == GameMode.BLUETOOTH_1V1 -> if (localPlayerId == PlayerId.PLAYER_2) "YOU ⭕" else "OPPONENT ⭕"
+                        selectedMode == GameMode.BLUETOOTH_1V1 -> if (localPlayerId == PlayerId.PLAYER_2) "$username (YOU) ⭕" else "OPPONENT ⭕"
                         else -> "PLAYER 2 ⭕"
                     }
                     Text(

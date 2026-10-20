@@ -67,6 +67,7 @@ fun NearbyMultiplayerDialog(
     game: GameDefinition,
     manager: LocalWifiMultiplayerManager,
     targetScore: Int = game.defaultTargetScore,
+    username: String = manager.localDeviceName,
     onDismiss: () -> Unit,
     onGameStarted: () -> Unit
 ) {
@@ -78,7 +79,7 @@ fun NearbyMultiplayerDialog(
     // Start appropriate mode when tab changes or initially opens
     DisposableEffect(selectedTab) {
         if (selectedTab == 0) {
-            manager.startHosting(gameId = game.id, gameTitle = game.title)
+            manager.startHosting(gameId = game.id, gameTitle = game.title, hostName = username)
         } else {
             manager.startDiscovery()
         }
@@ -249,7 +250,7 @@ fun NearbyMultiplayerDialog(
                         manager = manager,
                         lobbyState = lobbyState,
                         onRefreshDiscovery = { manager.startDiscovery() },
-                        onConnectSession = { session -> manager.connectToSession(session) }
+                        onConnectSession = { session -> manager.connectToSession(session, playerName = username) }
                     )
                 }
             }

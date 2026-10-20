@@ -37,6 +37,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = 0
     )
 
+    init {
+        viewModelScope.launch {
+            settings.collect { currentSettings ->
+                multiplayerManager.customUsername = currentSettings.username
+            }
+        }
+    }
+
+    fun setUsername(newUsername: String): kotlinx.coroutines.Job? {
+        val trimmed = newUsername.trim()
+        if (trimmed.isNotEmpty()) {
+            multiplayerManager.customUsername = trimmed
+            return viewModelScope.launch {
+                repository.updateUsername(trimmed)
+            }
+        }
+        return null
+    }
+
     fun toggleSound(enabled: Boolean) {
         viewModelScope.launch {
             repository.updateSettings(settings.value.copy(soundEnabled = enabled))

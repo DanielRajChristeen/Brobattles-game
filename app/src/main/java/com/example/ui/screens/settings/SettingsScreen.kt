@@ -25,12 +25,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -49,6 +55,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.support.DeveloperSupportConfig
@@ -56,6 +64,7 @@ import com.example.core.support.RewardedAdManager
 import com.example.ui.MainViewModel
 import com.example.ui.components.ChunkyButton
 import com.example.ui.components.bouncyClickable
+import com.example.ui.theme.PlayfulGreen
 import com.example.ui.theme.PlayfulOrange
 import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.ToyboxBorder
@@ -117,6 +126,172 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // PLAYER IDENTITY / USERNAME GROUP
+        Text(
+            text = "PLAYER IDENTITY",
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = FontWeight.Black,
+                letterSpacing = 1.sp
+            ),
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.5.dp, ToyboxBorder, RoundedCornerShape(24.dp))
+                .padding(18.dp)
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(PlayfulPurple.copy(alpha = 0.14f))
+                            .border(1.5.dp, PlayfulPurple.copy(alpha = 0.35f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = "👤", fontSize = 24.sp)
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Custom Username",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Your name across games, lobbies & scoreboards",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                var usernameInput by remember(settings.username) { mutableStateOf(settings.username) }
+                val trimmedInput = usernameInput.trim()
+                val isChanged = trimmedInput != settings.username && trimmedInput.isNotEmpty()
+                var showSavedBadge by remember { mutableStateOf(false) }
+
+                LaunchedEffect(showSavedBadge) {
+                    if (showSavedBadge) {
+                        kotlinx.coroutines.delay(2000)
+                        showSavedBadge = false
+                    }
+                }
+
+                OutlinedTextField(
+                    value = usernameInput,
+                    onValueChange = { newValue ->
+                        if (newValue.length <= 16) {
+                            usernameInput = newValue
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("setting_username_input"),
+                    placeholder = {
+                        Text("Enter your username")
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Words,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            if (trimmedInput.isNotEmpty()) {
+                                viewModel.setUsername(trimmedInput)
+                                showSavedBadge = true
+                                Toast.makeText(
+                                    context,
+                                    "Username saved locally as \"$trimmedInput\"! 🎮",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PlayfulPurple,
+                        unfocusedBorderColor = ToyboxBorder,
+                        focusedContainerColor = MaterialTheme.colorScheme.background,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.background
+                    ),
+                    trailingIcon = {
+                        if (usernameInput.isNotEmpty()) {
+                            IconButton(
+                                onClick = { usernameInput = "" },
+                                modifier = Modifier.testTag("setting_clear_username")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear username",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (usernameInput.isBlank()) {
+                            "Username cannot be empty"
+                        } else {
+                            "${usernameInput.length}/16 characters"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (usernameInput.isBlank()) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+
+                    ChunkyButton(
+                        text = if (showSavedBadge) "Saved! ✓" else "Save Username",
+                        onClick = {
+                            if (trimmedInput.isNotEmpty()) {
+                                viewModel.setUsername(trimmedInput)
+                                showSavedBadge = true
+                                Toast.makeText(
+                                    context,
+                                    "Username saved locally as \"$trimmedInput\"! 🎮",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        enabled = trimmedInput.isNotEmpty() && (!showSavedBadge && (isChanged || usernameInput != settings.username)),
+                        backgroundColor = if (showSavedBadge) PlayfulGreen else PlayfulPurple,
+                        buttonHeight = 44.dp,
+                        fontSize = 14.sp,
+                        cornerRadius = 14.dp,
+                        modifier = Modifier.testTag("save_username_button")
+                    )
+                }
             }
         }
 

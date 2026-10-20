@@ -73,10 +73,15 @@ class LocalWifiMultiplayerManager(
     private var clientWriter: BufferedWriter? = null
     private var clientReaderJob: Job? = null
 
-    val localDeviceName: String by lazy {
-        val model = Build.MODEL ?: "Phone"
-        if (model.length > 12) model.take(12) else model
-    }
+    @Volatile
+    var customUsername: String = ""
+
+    val localDeviceName: String
+        get() {
+            if (customUsername.isNotBlank()) return customUsername.trim()
+            val model = Build.MODEL ?: "Phone"
+            return if (model.length > 12) model.take(12) else model
+        }
 
     fun getLocalIpAddress(): String {
         return discovery.getLocalIpAddress()

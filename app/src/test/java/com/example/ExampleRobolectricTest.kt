@@ -5,6 +5,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.core.registry.GameRegistry
 import com.example.ui.theme.DarkThemeColors
 import com.example.ui.theme.LightThemeColors
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -75,5 +78,54 @@ class ExampleRobolectricTest {
     assertNotEquals(DarkThemeColors.background, DarkThemeColors.surface)
     assertNotEquals(DarkThemeColors.surface, DarkThemeColors.border)
     assertNotEquals(DarkThemeColors.primaryText, DarkThemeColors.secondaryText)
+  }
+
+  @Test
+  fun `verify custom username default and local database persistence`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+    val database = com.example.core.data.db.AppDatabase.getInstance(context)
+    val dao = database.userSettingsDao()
+
+    // Initial default setting
+    val defaultSettings = com.example.core.data.model.UserSettings()
+    assertEquals("Player", defaultSettings.username)
+
+    // Save customized username locally
+    val updatedSettings = defaultSettings.copy(username = "BroChampion")
+    dao.saveSettings(updatedSettings)
+
+    // Read back from database
+    val persisted = dao.getSettings().first()
+    assertNotNull(persisted)
+    assertEquals("BroChampion", persisted?.username)
+  }
+
+  @Test
+  fun `verify repository updateUsername persists trimmed username`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+    val database = com.example.core.data.db.AppDatabase.getInstance(context)
+    val repository = com.example.core.data.repository.GameRepository(database.matchRecordDao(), database.userSettingsDao())
+
+    repository.updateUsername("   Daniel   ")
+    val persisted = repository.userSettings.first()
+    assertEquals("Daniel", persisted.username)
+
+    // Blank username should be rejected and not overwrite existing username
+    repository.updateUsername("    ")
+    val afterBlank = repository.userSettings.first()
+    assertEquals("Daniel", afterBlank.username)
+  }
+
+  @Test
+  fun `verify multiplayerManager respects custom username`() {
+    val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+    val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
+    val manager = com.example.core.multiplayer.LocalWifiMultiplayerManager(context, scope)
+
+    val defaultName = manager.localDeviceName
+    assertTrue(defaultName.isNotBlank())
+
+    manager.customUsername = "SpeedyGamer"
+    assertEquals("SpeedyGamer", manager.localDeviceName)
   }
 }

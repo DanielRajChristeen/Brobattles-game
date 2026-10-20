@@ -5,6 +5,7 @@ import com.example.core.data.db.UserSettingsDao
 import com.example.core.data.model.MatchRecord
 import com.example.core.data.model.UserSettings
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 
 class GameRepository(
@@ -46,6 +47,14 @@ class GameRepository(
 
     suspend fun updateSettings(settings: UserSettings) {
         userSettingsDao.saveSettings(settings)
+    }
+
+    suspend fun updateUsername(username: String) {
+        val trimmed = username.trim()
+        if (trimmed.isNotEmpty()) {
+            val current = userSettingsDao.getSettings().firstOrNull() ?: UserSettings()
+            userSettingsDao.saveSettings(current.copy(username = trimmed))
+        }
     }
 
     suspend fun clearAllStats() {
