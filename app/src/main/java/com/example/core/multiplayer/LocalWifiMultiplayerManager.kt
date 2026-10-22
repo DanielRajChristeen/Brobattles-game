@@ -66,7 +66,7 @@ class LocalWifiMultiplayerManager(
     private var hostAcceptJob: Job? = null
     private val clientSockets = mutableListOf<Socket>()
     private val clientWriters = mutableListOf<BufferedWriter>()
-    private val hostPlayersList = mutableListOf<MultiplayerPlayer>()
+    private val hostConnectedPlayers = mutableListOf<MultiplayerPlayer>()
 
     // Client networking state
     private var clientSocket: Socket? = null
@@ -93,8 +93,7 @@ class LocalWifiMultiplayerManager(
     fun startHosting(
         gameId: String,
         gameTitle: String,
-        hostName: String = localDeviceName,
-        maxPlayers: Int = if (gameId.equals("snakes_and_ladders", ignoreCase = true) || gameId.equals("dot_connections", ignoreCase = true)) 5 else 2
+        hostName: String = localDeviceName
     ) {
         disconnect()
 
@@ -108,6 +107,8 @@ class LocalWifiMultiplayerManager(
             ServerSocket(0)
         }
         hostServerSocket = serverSocket
+
+        val maxPlayers = if (gameId.equals("snakes_and_ladders", ignoreCase = true)) 5 else 2
 
         val session = DiscoveredSession(
             sessionId = UUID.randomUUID().toString(),
@@ -127,9 +128,9 @@ class LocalWifiMultiplayerManager(
             role = "PLAYER_1"
         )
 
-        synchronized(hostPlayersList) {
-            hostPlayersList.clear()
-            hostPlayersList.add(hostPlayer)
+        synchronized(hostConnectedPlayers) {
+            hostConnectedPlayers.clear()
+            hostConnectedPlayers.add(hostPlayer)
         }
 
         _lobbyState.value = MultiplayerLobbyState.Hosting(
@@ -164,7 +165,6 @@ class LocalWifiMultiplayerManager(
     ) {
         scope.launch(Dispatchers.IO) {
             var clientWriterRef: BufferedWriter? = null
-            var assignedPlayer: MultiplayerPlayer? = null
             try {
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                 val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream()))
@@ -175,124 +175,98 @@ class LocalWifiMultiplayerManager(
                 val joinMsg = MultiplayerMessage.fromJson(firstLine)
 
                 if (joinMsg?.type == MultiplayerMessage.TYPE_JOIN_REQUEST) {
-                    var shouldAccept = false
-                    var rejectReason = ""
-                    var clientPlayer: MultiplayerPlayer
+                    val clientSenderId = joinMsg.senderId
+                    val rawName = if (joinMsg.payload.isNotBlank()) joinMsg.payload else "Player"
 
-                    synchronized(hostPlayersList) {
-                        val existingIndex = hostPlayersList.indexOfFirst { it.id == joinMsg.senderId }
+                    var assignedPlayer: MultiplayerPlayer? = null
+                    var isFull = false
+                    var currentPlayersSnapshot: List<MultiplayerPlayer> = emptyList()
+
+                    synchronized(hostConnectedPlayers) {
+                        val existingIndex = hostConnectedPlayers.indexOfFirst { it.id == clientSenderId }
                         if (existingIndex >= 0) {
-                            // Reconnecting player: reuse identity and assigned role!
-                            clientPlayer = hostPlayersList[existingIndex]
-                            shouldAccept = true
-                        } else if (hostPlayersList.size >= session.maxPlayers) {
-                            // Room is full: reject cleanly!
-                            shouldAccept = false
-                            rejectReason = "Room is full (maximum ${session.maxPlayers} players reached)"
-                            clientPlayer = hostPlayer
+                            val existing = hostConnectedPlayers[existingIndex]
+                            assignedPlayer = existing
+                        } else if (hostConnectedPlayers.size >= session.maxPlayers) {
+                            isFull = true
                         } else {
-                            val roleIndex = hostPlayersList.size
-                            val roleName = if (roleIndex < com.example.core.engine.PlayerId.entries.size) {
-                                com.example.core.engine.PlayerId.entries[roleIndex].name
-                            } else {
-                                "PLAYER_${roleIndex + 1}"
-                            }
-                            val clientName = if (joinMsg.payload.isNotBlank()) joinMsg.payload else "Player ${roleIndex + 1}"
-                            clientPlayer = MultiplayerPlayer(
-                                id = joinMsg.senderId,
-                                name = clientName,
+                            val nextIndex = hostConnectedPlayers.size + 1
+                            val newRole = "PLAYER_$nextIndex"
+                            val displayName = if (rawName != "Player") rawName else "Player $nextIndex"
+                            val newPlayer = MultiplayerPlayer(
+                                id = clientSenderId,
+                                name = displayName,
                                 isHost = false,
-                                role = roleName
+                                role = newRole
                             )
-                            hostPlayersList.add(clientPlayer)
-                            shouldAccept = true
+                            hostConnectedPlayers.add(newPlayer)
+                            assignedPlayer = newPlayer
                         }
+                        currentPlayersSnapshot = hostConnectedPlayers.toList()
                     }
 
-                    if (!shouldAccept) {
+                    if (isFull || assignedPlayer == null) {
                         val rejectMsg = MultiplayerMessage(
                             type = MultiplayerMessage.TYPE_JOIN_REJECTED,
                             sessionId = session.sessionId,
                             senderId = localPlayerId,
-                            payload = rejectReason
+                            payload = "Room is full (max ${session.maxPlayers} players)"
                         )
                         sendRawToWriter(writer, rejectMsg)
                         try { socket.close() } catch (ignored: Exception) {}
                         return@launch
                     }
 
-                    assignedPlayer = clientPlayer
-
                     synchronized(clientSockets) {
                         clientSockets.add(socket)
                         clientWriters.add(writer)
                     }
 
-                    val currentPlayersList = synchronized(hostPlayersList) { hostPlayersList.toList() }
-
-                    // Serialize all players into a JSON array for sync
-                    val playersJsonArray = org.json.JSONArray()
-                    currentPlayersList.forEach { p ->
-                        playersJsonArray.put(JSONObject().apply {
-                            put("id", p.id)
-                            put("name", p.name)
-                            put("role", p.role)
-                            put("isHost", p.isHost)
-                        })
+                    val playersJsonArr = org.json.JSONArray().apply {
+                        currentPlayersSnapshot.forEach { p ->
+                            put(JSONObject().apply {
+                                put("id", p.id)
+                                put("name", p.name)
+                                put("isHost", p.isHost)
+                                put("role", p.role)
+                            })
+                        }
                     }
 
-                    // Acknowledge join
+                    // Acknowledge join with assigned role and full player list
                     val acceptMsg = MultiplayerMessage(
                         type = MultiplayerMessage.TYPE_JOIN_ACCEPTED,
                         sessionId = session.sessionId,
                         senderId = localPlayerId,
                         payload = JSONObject().apply {
-                            put("role", clientPlayer.role)
+                            put("role", assignedPlayer.role)
                             put("gameId", session.gameId)
                             put("gameTitle", session.gameTitle)
                             put("hostName", hostPlayer.name)
-                            put("maxPlayers", session.maxPlayers)
-                            put("players", playersJsonArray)
                             put("chessHostColor", _chessHostColor.value)
+                            put("maxPlayers", session.maxPlayers)
+                            put("players", playersJsonArr)
                         }.toString()
                     )
                     sendRawToWriter(writer, acceptMsg)
-
-                    val currentLobby = _lobbyState.value
-                    if (currentLobby is MultiplayerLobbyState.InGame) {
-                        _lobbyState.value = currentLobby.copy(
-                            session = session.copy(currentPlayers = currentPlayersList.size),
-                            players = currentPlayersList
-                        )
-                        // Send GAME_START immediately so the reconnecting player enters InGame
-                        val startMsg = MultiplayerMessage(
-                            type = MultiplayerMessage.TYPE_GAME_START,
-                            sessionId = session.sessionId,
-                            senderId = localPlayerId,
-                            payload = JSONObject().apply {
-                                put("players", playersJsonArray)
-                                put("playerCount", currentPlayersList.size)
-                                put("gameId", session.gameId)
-                            }.toString()
-                        )
-                        sendRawToWriter(writer, startMsg)
-                    } else {
-                        _lobbyState.value = MultiplayerLobbyState.Connected(
-                            session = session.copy(currentPlayers = currentPlayersList.size),
-                            localPlayer = hostPlayer,
-                            players = currentPlayersList,
-                            isHost = true
-                        )
-                    }
 
                     // Broadcast updated player list to all connected clients
                     val playerListMsg = MultiplayerMessage(
                         type = MultiplayerMessage.TYPE_PLAYER_LIST,
                         sessionId = session.sessionId,
                         senderId = localPlayerId,
-                        payload = playersJsonArray.toString()
+                        payload = playersJsonArr.toString()
                     )
                     broadcastToClients(playerListMsg)
+
+                    val updatedSession = session.copy(currentPlayers = currentPlayersSnapshot.size)
+                    _lobbyState.value = MultiplayerLobbyState.Connected(
+                        session = updatedSession,
+                        localPlayer = hostPlayer,
+                        players = currentPlayersSnapshot,
+                        isHost = true
+                    )
+                    discovery.startAnnouncing(updatedSession, scope)
 
                     // Read loop for this connected client
                     var line: String? = reader.readLine()
@@ -313,12 +287,11 @@ class LocalWifiMultiplayerManager(
                 }
                 try { socket.close() } catch (ignored: Exception) {}
                 val state = _lobbyState.value
-                val remainingClients = synchronized(clientSockets) { clientSockets.size }
                 if (state is MultiplayerLobbyState.Connected || state is MultiplayerLobbyState.InGame) {
-                    if (remainingClients == 0 && !session.gameId.equals("snakes_and_ladders", ignoreCase = true) && !session.gameId.equals("dot_connections", ignoreCase = true)) {
-                        onPeerDisconnected("Opponent disconnected")
-                    } else if (assignedPlayer != null) {
-                        sendAction("PLAYER_DISCONNECTED", assignedPlayer.name)
+                    synchronized(clientSockets) {
+                        if (clientSockets.isEmpty()) {
+                            onPeerDisconnected("Opponent disconnected")
+                        }
                     }
                 }
             }
@@ -431,49 +404,37 @@ class LocalWifiMultiplayerManager(
             hostIp = hostIp.trim(),
             port = port,
             currentPlayers = 1,
-            maxPlayers = if (gameId.equals("snakes_and_ladders", ignoreCase = true) || gameId.equals("dot_connections", ignoreCase = true)) 5 else 2
+            maxPlayers = 2
         )
         connectToSession(directSession, playerName)
     }
 
     /**
-     * Called by Host when players are connected and the Host taps Start Game.
+     * Called by Host when both players are connected and the Host taps Start Game.
      */
     fun launchGame(extraConfigPayload: String = "") {
         val currentState = _lobbyState.value
         if (currentState is MultiplayerLobbyState.Connected && currentState.isHost) {
-            val playersArray = org.json.JSONArray()
-            currentState.players.forEach { p ->
-                playersArray.put(JSONObject().apply {
-                    put("id", p.id)
-                    put("name", p.name)
-                    put("role", p.role)
-                    put("isHost", p.isHost)
-                })
-            }
-
-            val fullConfig = JSONObject().apply {
-                if (extraConfigPayload.isNotBlank()) {
-                    try {
-                        val extra = JSONObject(extraConfigPayload)
-                        val keys = extra.keys()
-                        while (keys.hasNext()) {
-                            val k = keys.next()
-                            put(k, extra.get(k))
-                        }
-                    } catch (e: Exception) {
-                        put("extraConfig", extraConfigPayload)
-                    }
+            val playersJsonArr = org.json.JSONArray().apply {
+                currentState.players.forEach { p ->
+                    put(JSONObject().apply {
+                        put("id", p.id)
+                        put("name", p.name)
+                        put("isHost", p.isHost)
+                        put("role", p.role)
+                    })
                 }
-                put("players", playersArray)
-                put("playerCount", currentState.players.size)
+            }
+            val startPayload = JSONObject().apply {
+                put("config", extraConfigPayload)
+                put("players", playersJsonArr)
             }.toString()
 
             val msg = MultiplayerMessage(
                 type = MultiplayerMessage.TYPE_GAME_START,
                 sessionId = currentState.session.sessionId,
                 senderId = localPlayerId,
-                payload = fullConfig
+                payload = startPayload
             )
             broadcastToClients(msg)
 
@@ -482,7 +443,7 @@ class LocalWifiMultiplayerManager(
                 localRole = "PLAYER_1",
                 players = currentState.players,
                 isHost = true,
-                configPayload = fullConfig
+                configPayload = extraConfigPayload
             )
             _gameStartEvent.tryEmit(startInfo)
 
@@ -582,84 +543,28 @@ class LocalWifiMultiplayerManager(
         localPlayerName: String
     ) {
         when (msg.type) {
-            MultiplayerMessage.TYPE_JOIN_ACCEPTED -> {
-                val payloadJson = try { JSONObject(msg.payload) } catch (e: Exception) { JSONObject() }
-                val hostName = payloadJson.optString("hostName", session.hostName)
-                val actualGameId = payloadJson.optString("gameId", session.gameId)
-                val actualGameTitle = payloadJson.optString("gameTitle", session.gameTitle)
-                val assignedRole = payloadJson.optString("role", "PLAYER_2")
-                val maxPlayers = payloadJson.optInt("maxPlayers", session.maxPlayers)
-                val hostColor = payloadJson.optString("chessHostColor", "WHITE")
-                _chessHostColor.value = hostColor
-
-                val playersList = mutableListOf<MultiplayerPlayer>()
-                val arr = payloadJson.optJSONArray("players")
-                if (arr != null) {
-                    for (i in 0 until arr.length()) {
-                        val obj = arr.getJSONObject(i)
-                        playersList.add(MultiplayerPlayer(
-                            id = obj.getString("id"),
-                            name = obj.getString("name"),
-                            role = obj.getString("role"),
-                            isHost = obj.getBoolean("isHost")
-                        ))
-                    }
-                }
-
-                val localPlayer = MultiplayerPlayer(
-                    id = localPlayerId,
-                    name = localPlayerName,
-                    isHost = false,
-                    role = assignedRole
-                )
-
-                if (playersList.isEmpty()) {
-                    playersList.add(MultiplayerPlayer(id = msg.senderId, name = hostName, isHost = true, role = "PLAYER_1"))
-                    playersList.add(localPlayer)
-                }
-
-                val updatedSession = session.copy(
-                    sessionId = msg.sessionId,
-                    hostName = hostName,
-                    gameId = actualGameId,
-                    gameTitle = actualGameTitle,
-                    currentPlayers = playersList.size,
-                    maxPlayers = maxPlayers
-                )
-
-                _lobbyState.value = MultiplayerLobbyState.Connected(
-                    session = updatedSession,
-                    localPlayer = localPlayer,
-                    players = playersList,
-                    isHost = false
-                )
+            MultiplayerMessage.TYPE_JOIN_REJECTED -> {
+                onPeerDisconnected(msg.payload.ifBlank { "Session is full (max players reached)" })
             }
             MultiplayerMessage.TYPE_PLAYER_LIST -> {
                 try {
                     val arr = org.json.JSONArray(msg.payload)
                     val updatedPlayers = mutableListOf<MultiplayerPlayer>()
                     for (i in 0 until arr.length()) {
-                        val obj = arr.getJSONObject(i)
-                        updatedPlayers.add(MultiplayerPlayer(
-                            id = obj.getString("id"),
-                            name = obj.getString("name"),
-                            role = obj.getString("role"),
-                            isHost = obj.getBoolean("isHost")
-                        ))
+                        val pObj = arr.getJSONObject(i)
+                        updatedPlayers.add(
+                            MultiplayerPlayer(
+                                id = pObj.getString("id"),
+                                name = pObj.getString("name"),
+                                isHost = pObj.getBoolean("isHost"),
+                                role = pObj.getString("role")
+                            )
+                        )
                     }
                     val current = _lobbyState.value
                     if (current is MultiplayerLobbyState.Connected) {
-                        val myPlayer = updatedPlayers.find { it.id == localPlayerId } ?: current.localPlayer
                         _lobbyState.value = current.copy(
                             session = current.session.copy(currentPlayers = updatedPlayers.size),
-                            localPlayer = myPlayer,
-                            players = updatedPlayers
-                        )
-                    } else if (current is MultiplayerLobbyState.InGame) {
-                        val myPlayer = updatedPlayers.find { it.id == localPlayerId } ?: current.localPlayer
-                        _lobbyState.value = current.copy(
-                            session = current.session.copy(currentPlayers = updatedPlayers.size),
-                            localPlayer = myPlayer,
                             players = updatedPlayers
                         )
                     }
@@ -667,43 +572,131 @@ class LocalWifiMultiplayerManager(
                     Log.w(TAG, "Error parsing player list: ${e.message}")
                 }
             }
-            MultiplayerMessage.TYPE_JOIN_REJECTED -> {
-                val reason = msg.payload.ifBlank { "Could not join game session (room full)" }
-                _lobbyState.value = MultiplayerLobbyState.Disconnected(reason)
-            }
-            MultiplayerMessage.TYPE_GAME_START -> {
-                try {
-                    val config = JSONObject(msg.payload)
-                    val color = config.optString("chessHostColor", "")
-                    if (color.isNotBlank()) {
-                        _chessHostColor.value = color
-                    }
-                } catch (e: Exception) {}
+            MultiplayerMessage.TYPE_JOIN_ACCEPTED -> {
+                val hostName = try {
+                    JSONObject(msg.payload).optString("hostName", session.hostName)
+                } catch (e: Exception) {
+                    session.hostName
+                }
+                val actualGameId = try {
+                    JSONObject(msg.payload).optString("gameId", session.gameId)
+                } catch (e: Exception) {
+                    session.gameId
+                }
+                val actualGameTitle = try {
+                    JSONObject(msg.payload).optString("gameTitle", session.gameTitle)
+                } catch (e: Exception) {
+                    session.gameTitle
+                }
+                val hostColor = try {
+                    JSONObject(msg.payload).optString("chessHostColor", "WHITE")
+                } catch (e: Exception) {
+                    "WHITE"
+                }
+                _chessHostColor.value = hostColor
 
-                val current = _lobbyState.value
-                val parsedPlayers = mutableListOf<MultiplayerPlayer>()
+                val assignedRole = try {
+                    JSONObject(msg.payload).optString("role", "PLAYER_2")
+                } catch (e: Exception) {
+                    "PLAYER_2"
+                }
+                val maxPlayers = try {
+                    JSONObject(msg.payload).optInt("maxPlayers", session.maxPlayers)
+                } catch (e: Exception) {
+                    session.maxPlayers
+                }
+
+                val playersList = mutableListOf<MultiplayerPlayer>()
                 try {
-                    val config = JSONObject(msg.payload)
-                    val arr = config.optJSONArray("players")
-                    if (arr != null) {
-                        for (i in 0 until arr.length()) {
-                            val obj = arr.getJSONObject(i)
-                            parsedPlayers.add(MultiplayerPlayer(
-                                id = obj.getString("id"),
-                                name = obj.getString("name"),
-                                role = obj.getString("role"),
-                                isHost = obj.getBoolean("isHost")
-                            ))
+                    val pArr = JSONObject(msg.payload).optJSONArray("players")
+                    if (pArr != null) {
+                        for (i in 0 until pArr.length()) {
+                            val pObj = pArr.getJSONObject(i)
+                            playersList.add(
+                                MultiplayerPlayer(
+                                    id = pObj.getString("id"),
+                                    name = pObj.getString("name"),
+                                    isHost = pObj.getBoolean("isHost"),
+                                    role = pObj.getString("role")
+                                )
+                            )
                         }
                     }
                 } catch (e: Exception) {}
 
-                val playersList = if (parsedPlayers.isNotEmpty()) parsedPlayers else {
-                    (current as? MultiplayerLobbyState.Connected)?.players ?: emptyList()
-                }
+                val localPlayer = MultiplayerPlayer(
+                    id = localPlayerId,
+                    name = localPlayerName,
+                    isHost = false,
+                    role = assignedRole
+                )
+                val hostPlayer = MultiplayerPlayer(
+                    id = msg.senderId,
+                    name = hostName,
+                    isHost = true,
+                    role = "PLAYER_1"
+                )
 
-                val localPlayer = playersList.find { it.id == localPlayerId }
-                    ?: (current as? MultiplayerLobbyState.Connected)?.localPlayer
+                val finalPlayers = if (playersList.isNotEmpty()) playersList else listOf(hostPlayer, localPlayer)
+
+                val updatedSession = session.copy(
+                    sessionId = msg.sessionId,
+                    hostName = hostName,
+                    gameId = actualGameId,
+                    gameTitle = actualGameTitle,
+                    currentPlayers = finalPlayers.size,
+                    maxPlayers = maxPlayers
+                )
+
+                _lobbyState.value = MultiplayerLobbyState.Connected(
+                    session = updatedSession,
+                    localPlayer = localPlayer,
+                    players = finalPlayers,
+                    isHost = false
+                )
+            }
+            MultiplayerMessage.TYPE_GAME_START -> {
+                var configPayload = msg.payload
+                var parsedPlayers: List<MultiplayerPlayer>? = null
+                try {
+                    if (msg.payload.trimStart().startsWith("{")) {
+                        val json = JSONObject(msg.payload)
+                        if (json.has("config")) {
+                            configPayload = json.getString("config")
+                        }
+                        val color = json.optString("chessHostColor", "")
+                        if (color.isNotBlank()) {
+                            _chessHostColor.value = color
+                        }
+                        if (json.has("players")) {
+                            val pArr = json.getJSONArray("players")
+                            val pList = mutableListOf<MultiplayerPlayer>()
+                            for (i in 0 until pArr.length()) {
+                                val pObj = pArr.getJSONObject(i)
+                                pList.add(
+                                    MultiplayerPlayer(
+                                        id = pObj.getString("id"),
+                                        name = pObj.getString("name"),
+                                        isHost = pObj.getBoolean("isHost"),
+                                        role = pObj.getString("role")
+                                    )
+                                )
+                            }
+                            parsedPlayers = pList
+                        }
+                    }
+                } catch (e: Exception) {}
+
+                val currentState = _lobbyState.value
+                val existingPlayers = (currentState as? MultiplayerLobbyState.Connected)?.players ?: emptyList()
+                val finalPlayers = parsedPlayers ?: (if (existingPlayers.isNotEmpty()) existingPlayers else {
+                    val hostP = MultiplayerPlayer(id = msg.senderId, name = session.hostName, isHost = true, role = "PLAYER_1")
+                    val localP = MultiplayerPlayer(id = localPlayerId, name = localPlayerName, isHost = false, role = "PLAYER_2")
+                    listOf(hostP, localP)
+                })
+
+                val localPlayer = (currentState as? MultiplayerLobbyState.Connected)?.localPlayer
+                    ?: finalPlayers.firstOrNull { it.id == localPlayerId }
                     ?: MultiplayerPlayer(
                         id = localPlayerId,
                         name = localPlayerName,
@@ -711,20 +704,20 @@ class LocalWifiMultiplayerManager(
                         role = "PLAYER_2"
                     )
 
-                val updatedSession = session.copy(sessionId = msg.sessionId, currentPlayers = playersList.size)
+                val updatedSession = session.copy(sessionId = msg.sessionId, currentPlayers = finalPlayers.size)
                 val startInfo = GameStartInfo(
                     gameId = updatedSession.gameId,
                     localRole = localPlayer.role,
-                    players = playersList,
+                    players = finalPlayers,
                     isHost = false,
-                    configPayload = msg.payload
+                    configPayload = configPayload
                 )
                 _gameStartEvent.tryEmit(startInfo)
 
                 _lobbyState.value = MultiplayerLobbyState.InGame(
                     session = updatedSession,
                     localPlayer = localPlayer,
-                    players = playersList,
+                    players = finalPlayers,
                     isHost = false
                 )
             }
@@ -802,10 +795,6 @@ class LocalWifiMultiplayerManager(
         try { clientSocket?.close() } catch (ignored: Exception) {}
         clientSocket = null
         clientWriter = null
-
-        synchronized(hostPlayersList) {
-            hostPlayersList.clear()
-        }
 
         _lobbyState.value = MultiplayerLobbyState.Idle
         _chessHostColor.value = "WHITE"

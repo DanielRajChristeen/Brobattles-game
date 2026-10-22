@@ -27,8 +27,8 @@ class SnakesAndLaddersGameEngine(
     }
 
     fun syncState(newState: SnakesAndLaddersState) {
-        playerCount = newState.playerCount
         _state = newState
+        playerCount = newState.playerCount
     }
 
     fun getNextPlayer(current: PlayerId): PlayerId {
@@ -115,10 +115,9 @@ class SnakesAndLaddersGameEngine(
         // Check if reached 100 directly
         if (targetSquare == SnakesAndLaddersBoard.TOTAL_SQUARES) {
             val newPositions = _state.playerPositions.toMutableList()
-            while (newPositions.size <= playerIndex) {
-                newPositions.add(1)
+            if (playerIndex in newPositions.indices) {
+                newPositions[playerIndex] = 100
             }
-            newPositions[playerIndex] = 100
 
             _state = _state.copy(
                 playerPositions = newPositions,
@@ -154,10 +153,9 @@ class SnakesAndLaddersGameEngine(
         val nextTurnPlayer = if (isWon) player else (if (isExtraTurn) player else getNextPlayer(player))
 
         val newPositions = _state.playerPositions.toMutableList()
-        while (newPositions.size <= playerIndex) {
-            newPositions.add(1)
+        if (playerIndex in newPositions.indices) {
+            newPositions[playerIndex] = finalSquare
         }
-        newPositions[playerIndex] = finalSquare
 
         _state = _state.copy(
             playerPositions = newPositions,

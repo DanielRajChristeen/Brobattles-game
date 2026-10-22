@@ -26,10 +26,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -41,6 +44,8 @@ import com.example.core.engine.dotconnections.DotEdge
 import com.example.core.engine.dotconnections.DotPlayer
 import com.example.core.engine.dotconnections.EdgeOrientation
 import com.example.ui.theme.ChillTheme
+import com.example.ui.theme.PlayfulOrange
+import com.example.ui.theme.PlayfulPurple
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -221,7 +226,11 @@ fun DotConnectionsBoardView(
                     val boxTop = boardPadding + r * spacing
                     val boxSize = spacing
 
-                    val fillColor = boxOwner.composeColor.copy(alpha = 0.22f)
+                    val fillColor = if (boxOwner == DotPlayer.PLAYER_1) {
+                        PlayfulOrange.copy(alpha = 0.22f)
+                    } else {
+                        PlayfulPurple.copy(alpha = 0.22f)
+                    }
 
                     // Scaled pulse around box center
                     val centerX = boxLeft + boxSize / 2f
@@ -243,24 +252,32 @@ fun DotConnectionsBoardView(
                         isAntiAlias = true
                         textAlign = android.graphics.Paint.Align.CENTER
                         typeface = android.graphics.Typeface.DEFAULT_BOLD
-                        color = boxOwner.colorHex.toInt()
+                        color = if (boxOwner == DotPlayer.PLAYER_1) {
+                            android.graphics.Color.parseColor("#F97316")
+                        } else {
+                            android.graphics.Color.parseColor("#8B5CF6")
+                        }
                     }
                     val fontMetrics = paint.fontMetrics
                     val textY = centerY - (fontMetrics.descent + fontMetrics.ascent) / 2f
-                    val symbol = boxOwner.symbol
+                    val symbol = if (boxOwner == DotPlayer.PLAYER_1) "P1" else "P2"
                     drawContext.canvas.nativeCanvas.drawText(symbol, centerX, textY, paint)
                 }
             }
 
             // 2. Draw Candidate / Hover Preview Edge
             previewEdge?.let { edge ->
-                val previewColor = state.activePlayer.composeColor.copy(alpha = 0.45f)
+                val previewColor = if (state.activePlayer == DotPlayer.PLAYER_1) {
+                    PlayfulOrange.copy(alpha = 0.45f)
+                } else {
+                    PlayfulPurple.copy(alpha = 0.45f)
+                }
                 drawEdgeLine(edge, boardPadding, spacing, previewColor, strokeWidth * 0.85f, progress = 1f)
             }
 
             // 3. Draw Placed Edges
             for ((edge, placement) in state.placedEdges) {
-                val lineColor = placement.owner.composeColor
+                val lineColor = if (placement.owner == DotPlayer.PLAYER_1) PlayfulOrange else PlayfulPurple
                 val isRecent = state.lastMoveEdge == edge
                 val progress = if (isRecent) lineAnim.value else 1f
                 drawEdgeLine(edge, boardPadding, spacing, lineColor, strokeWidth, progress)
@@ -269,7 +286,6 @@ fun DotConnectionsBoardView(
             // 4. Draw Matrix of Dots
             val dotColor = if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
             val dotGlowColor = if (isDark) Color(0xFF0F172A).copy(alpha = 0.5f) else Color(0xFFCBD5E1)
-            val activeColor = state.activePlayer.composeColor
 
             for (r in 0 until dotsCount) {
                 for (c in 0 until dotsCount) {
@@ -282,7 +298,7 @@ fun DotConnectionsBoardView(
                     val isSelected = selectedDot?.first == r && selectedDot?.second == c
                     if (isSelected) {
                         drawCircle(
-                            color = activeColor.copy(alpha = 0.35f),
+                            color = (if (state.activePlayer == DotPlayer.PLAYER_1) PlayfulOrange else PlayfulPurple).copy(alpha = 0.35f),
                             radius = dotRadius * 2.2f,
                             center = dotCenter
                         )
@@ -297,7 +313,9 @@ fun DotConnectionsBoardView(
 
                     // Solid dot
                     drawCircle(
-                        color = if (isSelected) activeColor else dotColor,
+                        color = if (isSelected) {
+                            if (state.activePlayer == DotPlayer.PLAYER_1) PlayfulOrange else PlayfulPurple
+                        } else dotColor,
                         radius = dotRadius,
                         center = dotCenter
                     )

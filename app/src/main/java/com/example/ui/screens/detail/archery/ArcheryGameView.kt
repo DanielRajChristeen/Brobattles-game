@@ -55,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -90,6 +91,18 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
+
+private const val CANONICAL_ARENA_WIDTH = 1000f
+private const val CANONICAL_ARENA_HEIGHT = 560f
+private const val CANONICAL_GROUND_Y = CANONICAL_ARENA_HEIGHT * 0.54f // 302.4f
+private const val CANONICAL_P1_ANCHOR_X = CANONICAL_ARENA_WIDTH * 0.17f // 170f
+private const val CANONICAL_P2_ANCHOR_X = CANONICAL_ARENA_WIDTH * 0.83f // 830f
+private const val CANONICAL_P1_PLATFORM_END = CANONICAL_ARENA_WIDTH * 0.28f // 280f
+private const val CANONICAL_P2_PLATFORM_START = CANONICAL_ARENA_WIDTH * 0.72f // 720f
+private const val CANONICAL_P1_CENTER_X = CANONICAL_P1_ANCHOR_X + 18f // 188f
+private const val CANONICAL_P1_CENTER_Y = CANONICAL_GROUND_Y - 75f // 227.4f
+private const val CANONICAL_P2_CENTER_X = CANONICAL_P2_ANCHOR_X - 18f // 812f
+private const val CANONICAL_P2_CENTER_Y = CANONICAL_GROUND_Y - 75f // 227.4f
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -160,6 +173,24 @@ fun ArcheryGameView(
     var arenaWidth by remember { mutableFloatStateOf(0f) }
     var arenaHeight by remember { mutableFloatStateOf(0f) }
 
+    fun screenToCanonical(screenOffset: Offset): Offset {
+        val curW = if (arenaWidth > 0f) arenaWidth else CANONICAL_ARENA_WIDTH
+        val curH = if (arenaHeight > 0f) arenaHeight else CANONICAL_ARENA_HEIGHT
+        val sx = curW / CANONICAL_ARENA_WIDTH
+        val sy = curH / CANONICAL_ARENA_HEIGHT
+        return Offset(screenOffset.x / sx, screenOffset.y / sy)
+    }
+
+    fun canonicalToScreenX(canonicalX: Float): Float {
+        val curW = if (arenaWidth > 0f) arenaWidth else CANONICAL_ARENA_WIDTH
+        return (canonicalX / CANONICAL_ARENA_WIDTH) * curW
+    }
+
+    fun canonicalToScreenY(canonicalY: Float): Float {
+        val curH = if (arenaHeight > 0f) arenaHeight else CANONICAL_ARENA_HEIGHT
+        return (canonicalY / CANONICAL_ARENA_HEIGHT) * curH
+    }
+
     // Multi-Arrow Simultaneous Flying System
     val flyingArrows = remember { mutableStateListOf<ArrowProjectile>() }
 
@@ -191,6 +222,9 @@ fun ArcheryGameView(
     var p2FingerPos by remember { mutableStateOf<Offset?>(null) }
     var p2IsPullMode by remember { mutableStateOf(false) }
 
+    var p1LastAimSendTime by remember { mutableLongStateOf(0L) }
+    var p2LastAimSendTime by remember { mutableLongStateOf(0L) }
+
     // Round status & outcomes
     var roundWinner by remember { mutableStateOf<String?>(null) }
     var roundToast by remember { mutableStateOf<String?>(null) }
@@ -199,9 +233,9 @@ fun ArcheryGameView(
     var matchRecorded by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
 
-    // Countdown State (for VS Bot and same-device 2 Players)
+    // Countdown State (Synchronized across both players)
     var countdownText by remember { mutableStateOf<String?>(null) }
-    var isCountdownBlockingInput by remember { mutableStateOf(!isNearbyMode) }
+    var isCountdownBlockingInput by remember { mutableStateOf(true) }
     var countdownJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     fun vibrate(zone: ArcheryHitZone? = null) {
@@ -217,11 +251,6 @@ fun ArcheryGameView(
 
     fun runCountdown() {
         countdownJob?.cancel()
-        if (isNearbyMode) {
-            countdownText = null
-            isCountdownBlockingInput = false
-            return
-        }
         countdownJob = scope.launch {
             isCountdownBlockingInput = true
             countdownText = "3"
@@ -251,8 +280,11 @@ fun ArcheryGameView(
 
     // Launch countdown before the very first round starts
     LaunchedEffect(Unit) {
-        if (!isNearbyMode) {
+        if (!isNearbyMode || isHost) {
             runCountdown()
+            if (isNearbyMode && isHost) {
+                multiplayerManager.sendAction("ARCHERY_COUNTDOWN", "1")
+            }
         }
     }
 
@@ -292,35 +324,36 @@ fun ArcheryGameView(
         p2PreviousShots.clear()
         startNextRound()
         vibrate()
-        if (!isNearbyMode) {
+        if (!isNearbyMode || isHost) {
             runCountdown()
+            if (isNearbyMode && isHost) {
+                multiplayerManager.sendAction("ARCHERY_COUNTDOWN", "1")
+            }
         }
     }
 
-    fun fireRemoteArrow(shooterIsLeft: Boolean, elevation: Float, power: Float) {
-        if (arenaWidth <= 0f) return
-        val groundY = arenaHeight * 0.54f
-        val centerX = if (shooterIsLeft) arenaWidth * 0.17f else arenaWidth * 0.83f
-        val centerY = groundY - 45f
+    fun fireRemoteArrow(shooterIsLeft: Boolean, elevation: Float, power: Float, arrowId: Long = System.nanoTime()) {
         val launchSpeed = 500f + (power * 850f)
         val rad = elevation * (PI / 180.0)
         val vx = if (shooterIsLeft) (cos(rad) * launchSpeed).toFloat() else (-cos(rad) * launchSpeed).toFloat()
         val vy = (-sin(rad) * launchSpeed).toFloat()
         val angle = if (shooterIsLeft) -elevation else (-180f + elevation)
         val arrow = ArrowProjectile(
-            x = centerX,
-            y = centerY,
+            id = arrowId,
+            x = if (shooterIsLeft) CANONICAL_P1_CENTER_X else CANONICAL_P2_CENTER_X,
+            y = if (shooterIsLeft) CANONICAL_P1_CENTER_Y else CANONICAL_P2_CENTER_Y,
             vx = vx,
             vy = vy,
             angleDegrees = angle,
             shooterIsLeft = shooterIsLeft
         )
         flyingArrows.add(arrow)
+
         if (shooterIsLeft) {
-            p1PreviousShots.add(0, ShotAngleReference(elevation, power, centerX, centerY, true, false))
+            p1PreviousShots.add(0, ShotAngleReference(elevation, power, CANONICAL_P1_CENTER_X, CANONICAL_P1_CENTER_Y, true, false))
             if (p1PreviousShots.size > 5) p1PreviousShots.removeAt(p1PreviousShots.lastIndex)
         } else {
-            p2PreviousShots.add(0, ShotAngleReference(elevation, power, centerX, centerY, false, false))
+            p2PreviousShots.add(0, ShotAngleReference(elevation, power, CANONICAL_P2_CENTER_X, CANONICAL_P2_CENTER_Y, false, false))
             if (p2PreviousShots.size > 5) p2PreviousShots.removeAt(p2PreviousShots.lastIndex)
         }
         vibrate()
@@ -331,14 +364,176 @@ fun ArcheryGameView(
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    "ARCHERY_AIM" -> {
+                        val parts = action.payload.split(",")
+                        if (parts.size >= 4) {
+                            val shooter = parts[0]
+                            val angle = parts[1].toFloatOrNull() ?: 35f
+                            val power = parts[2].toFloatOrNull() ?: 0.5f
+                            val isPull = parts[3] == "1"
+                            if (shooter == "1" && !localPlayerIsLeft) {
+                                p1AnimState = ArcheryCharacterAnimState.AIMING
+                                p1TargetAngleDeg = angle
+                                p1VisualAngleDeg = angle
+                                p1DragPower = power
+                                p1IsPullMode = isPull
+                                p1IsDragging = true
+                            } else if (shooter == "2" && localPlayerIsLeft) {
+                                p2AnimState = ArcheryCharacterAnimState.AIMING
+                                p2TargetAngleDeg = angle
+                                p2VisualAngleDeg = angle
+                                p2DragPower = power
+                                p2IsPullMode = isPull
+                                p2IsDragging = true
+                            }
+                        }
+                    }
+                    "ARCHERY_CANCEL_AIM" -> {
+                        val shooter = action.payload.trim()
+                        if (shooter == "1" && !localPlayerIsLeft) {
+                            p1IsDragging = false
+                            p1FingerPos = null
+                            if (p1Health > 0) p1AnimState = ArcheryCharacterAnimState.IDLE
+                        } else if (shooter == "2" && localPlayerIsLeft) {
+                            p2IsDragging = false
+                            p2FingerPos = null
+                            if (p2Health > 0) p2AnimState = ArcheryCharacterAnimState.IDLE
+                        }
+                    }
                     "ARCHERY_FIRE" -> {
                         val parts = action.payload.split(",")
                         if (parts.size >= 3) {
                             val isLeft = parts[0] == "1"
                             val elevation = parts[1].toFloatOrNull() ?: 35f
                             val power = parts[2].toFloatOrNull() ?: 0.5f
-                            fireRemoteArrow(isLeft, elevation, power)
+                            val remoteArrowId = parts.getOrNull(3)?.toLongOrNull() ?: System.nanoTime()
+                            if (isLeft) {
+                                p1IsDragging = false
+                                p1FingerPos = null
+                                if (p1Health > 0) p1AnimState = ArcheryCharacterAnimState.IDLE
+                            } else {
+                                p2IsDragging = false
+                                p2FingerPos = null
+                                if (p2Health > 0) p2AnimState = ArcheryCharacterAnimState.IDLE
+                            }
+                            fireRemoteArrow(isLeft, elevation, power, remoteArrowId)
                         }
+                    }
+                    "ARCHERY_HIT" -> {
+                        val parts = action.payload.split(",")
+                        if (parts.size >= 7 && !isHost) {
+                            val targetIsP2 = parts[0] == "2"
+                            val hitZoneName = parts[1]
+                            val offsetX = parts[2].toFloatOrNull() ?: 0f
+                            val offsetY = parts[3].toFloatOrNull() ?: 0f
+                            val arrowAngle = parts[4].toFloatOrNull() ?: 0f
+                            val newP1Hp = parts[5].toIntOrNull() ?: p1Health
+                            val newP2Hp = parts[6].toIntOrNull() ?: p2Health
+                            val hitArrowId = parts.getOrNull(7)?.toLongOrNull()
+
+                            val hitZone = try { ArcheryHitZone.valueOf(hitZoneName) } catch (_: Exception) { ArcheryHitZone.NONE }
+                            val attached = AttachedArrow(
+                                id = hitArrowId ?: System.nanoTime(),
+                                zone = hitZone,
+                                localOffsetX = offsetX,
+                                localOffsetY = offsetY,
+                                angleDegrees = arrowAngle
+                            )
+
+                            // Consume and remove the flying arrow from shooter
+                            val shooterIsLeft = targetIsP2
+                            val activeArrow = (if (hitArrowId != null) flyingArrows.firstOrNull { it.id == hitArrowId } else null)
+                                ?: flyingArrows.firstOrNull { it.shooterIsLeft == shooterIsLeft && it.isFlying }
+                            if (activeArrow != null) {
+                                activeArrow.hasProcessedImpact = true
+                                activeArrow.isFlying = false
+                                flyingArrows.remove(activeArrow)
+                            }
+
+                            vibrate(hitZone)
+                            if (targetIsP2) {
+                                p2AttachedArrows.add(attached)
+                                val damageDealt = p2Health - newP2Hp
+                                p2Health = newP2Hp
+                                p2LastHitZone = hitZone
+                                p2StaggerProgress = 1f
+                                if (newP2Hp > 0) {
+                                    p2AnimState = ArcheryCharacterAnimState.RECOIL
+                                    roundToast = "${hitZone.displayName} HIT! -$damageDealt HP 🎯"
+                                }
+                            } else {
+                                p1AttachedArrows.add(attached)
+                                val damageDealt = p1Health - newP1Hp
+                                p1Health = newP1Hp
+                                p1LastHitZone = hitZone
+                                p1StaggerProgress = 1f
+                                if (newP1Hp > 0) {
+                                    p1AnimState = ArcheryCharacterAnimState.RECOIL
+                                    roundToast = "${hitZone.displayName} HIT! -$damageDealt HP 🎯"
+                                }
+                            }
+                        }
+                    }
+                    "ARCHERY_ROUND_CONCLUDE" -> {
+                        val parts = action.payload.split(",")
+                        if (parts.size >= 6 && !isHost) {
+                            val winner = parts[0]
+                            val reason = parts[1]
+                            val newP1Score = parts[2].toIntOrNull() ?: p1Score
+                            val newP2Score = parts[3].toIntOrNull() ?: p2Score
+                            val roundNum = parts[4].toIntOrNull() ?: currentRound
+                            val isMatchFinished = parts[5] == "1"
+
+                            if (roundWinner == null) {
+                                roundWinner = winner
+                                roundToast = reason
+                                p1Score = newP1Score
+                                p2Score = newP2Score
+                                currentRound = roundNum
+
+                                when (winner) {
+                                    "P1" -> {
+                                        p1AnimState = ArcheryCharacterAnimState.CELEBRATING
+                                        p2AnimState = ArcheryCharacterAnimState.KNOCKED_OUT
+                                    }
+                                    "P2" -> {
+                                        p2AnimState = ArcheryCharacterAnimState.CELEBRATING
+                                        p1AnimState = ArcheryCharacterAnimState.KNOCKED_OUT
+                                    }
+                                    else -> {
+                                        p1AnimState = ArcheryCharacterAnimState.KNOCKED_OUT
+                                        p2AnimState = ArcheryCharacterAnimState.KNOCKED_OUT
+                                    }
+                                }
+
+                                scope.launch {
+                                    isTransitioningRound = true
+                                    delay(2200)
+                                    if (isMatchFinished) {
+                                        showMatchWonDialog = true
+                                        if (!matchRecorded) {
+                                            matchRecorded = true
+                                            val winnerName = if (p1Score >= targetScore) "PLAYER_1" else "PLAYER_2"
+                                            viewModel.repository.recordMatch(
+                                                gameId = "archery",
+                                                gameTitle = "Archery",
+                                                mode = selectedMode.name,
+                                                player1Score = p1Score,
+                                                player2Score = p2Score,
+                                                winner = winnerName,
+                                                durationSeconds = 120
+                                            )
+                                        }
+                                    } else {
+                                        currentRound++
+                                        startNextRound()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "ARCHERY_COUNTDOWN" -> {
+                        runCountdown()
                     }
                     "ARCHERY_REMATCH" -> {
                         restartMatch()
@@ -371,6 +566,20 @@ fun ArcheryGameView(
                 p1AnimState = ArcheryCharacterAnimState.KNOCKED_OUT
                 p2AnimState = ArcheryCharacterAnimState.KNOCKED_OUT
             }
+        }
+
+        if (isNearbyMode && isHost) {
+            val isFinished = ArcheryRules.isMatchFinished(
+                currentRound = currentRound,
+                targetScore = targetScore,
+                isNearbyMode = isNearbyMode,
+                p1Score = p1Score,
+                p2Score = p2Score
+            )
+            multiplayerManager.sendAction(
+                "ARCHERY_ROUND_CONCLUDE",
+                "$winner,$reason,$p1Score,$p2Score,$currentRound,${if (isFinished) 1 else 0}"
+            )
         }
 
         scope.launch {
@@ -407,8 +616,11 @@ fun ArcheryGameView(
             } else {
                 currentRound++
                 startNextRound()
-                if (!isNearbyMode) {
+                if (!isNearbyMode || isHost) {
                     runCountdown()
+                    if (isNearbyMode && isHost) {
+                        multiplayerManager.sendAction("ARCHERY_COUNTDOWN", "$currentRound")
+                    }
                 }
             }
         }
@@ -427,16 +639,15 @@ fun ArcheryGameView(
 
         if (hitZone != ArcheryHitZone.NONE && hitResult.attachedArrow != null) {
             vibrate(hitZone)
-            if (targetIsP2) {
-                // If previous arrows already occupy this zone, add slight offset so all attached arrows are visible
+            val attached = if (targetIsP2) {
                 val existingCount = p2AttachedArrows.count { it.zone == hitZone }
                 val jitterX = if (existingCount > 0) (existingCount * 4f) * (if (existingCount % 2 == 0) 1f else -1f) else 0f
                 val jitterY = if (existingCount > 0) (existingCount * 3.5f) * (if (existingCount % 2 == 1) 1f else -1f) else 0f
-                val attached = hitResult.attachedArrow.copy(
+                val a = hitResult.attachedArrow.copy(
                     localOffsetX = hitResult.attachedArrow.localOffsetX + jitterX,
                     localOffsetY = hitResult.attachedArrow.localOffsetY + jitterY
                 )
-                p2AttachedArrows.add(attached)
+                p2AttachedArrows.add(a)
 
                 val prevHealth = p2Health
                 val effect = ArcheryRules.calculateDamage(p2Health, hitZone)
@@ -451,15 +662,16 @@ fun ArcheryGameView(
                     p2AnimState = ArcheryCharacterAnimState.RECOIL
                     roundToast = "${hitZone.displayName} HIT! -$damageDealt HP 🎯"
                 }
+                a
             } else {
                 val existingCount = p1AttachedArrows.count { it.zone == hitZone }
                 val jitterX = if (existingCount > 0) (existingCount * 4f) * (if (existingCount % 2 == 0) 1f else -1f) else 0f
                 val jitterY = if (existingCount > 0) (existingCount * 3.5f) * (if (existingCount % 2 == 1) 1f else -1f) else 0f
-                val attached = hitResult.attachedArrow.copy(
+                val a = hitResult.attachedArrow.copy(
                     localOffsetX = hitResult.attachedArrow.localOffsetX + jitterX,
                     localOffsetY = hitResult.attachedArrow.localOffsetY + jitterY
                 )
-                p1AttachedArrows.add(attached)
+                p1AttachedArrows.add(a)
 
                 val prevHealth = p1Health
                 val effect = ArcheryRules.calculateDamage(p1Health, hitZone)
@@ -474,6 +686,14 @@ fun ArcheryGameView(
                     p1AnimState = ArcheryCharacterAnimState.RECOIL
                     roundToast = "${hitZone.displayName} HIT! -$damageDealt HP 🎯"
                 }
+                a
+            }
+
+            if (isNearbyMode && isHost) {
+                multiplayerManager.sendAction(
+                    "ARCHERY_HIT",
+                    "${if (targetIsP2) 2 else 1},${hitZone.name},${attached.localOffsetX},${attached.localOffsetY},${attached.angleDegrees},$p1Health,$p2Health,${arrow.id}"
+                )
             }
         }
     }
@@ -505,14 +725,8 @@ fun ArcheryGameView(
                 }
 
                 // Advance flying arrows and run collision detection
-                if (flyingArrows.isNotEmpty() && arenaWidth > 0f) {
+                if (flyingArrows.isNotEmpty()) {
                     val deadArrows = mutableListOf<ArrowProjectile>()
-                    val groundY = arenaHeight * 0.54f
-                    val p1AnchorX = arenaWidth * 0.17f
-                    val p2AnchorX = arenaWidth * 0.83f
-                    val p1PlatformEnd = arenaWidth * 0.28f
-                    val p2PlatformStart = arenaWidth * 0.72f
-
                     for (arrow in flyingArrows) {
                         if (!arrow.isFlying) {
                             deadArrows.add(arrow)
@@ -527,25 +741,26 @@ fun ArcheryGameView(
                         arrow.trail.add(Offset(arrow.x, arrow.y))
                         if (arrow.trail.size > 8) arrow.trail.removeAt(0)
 
-                        // Collision Detection against opponent
-                        val targetAnchorX = if (arrow.shooterIsLeft) p2AnchorX else p1AnchorX
+                        // Collision Detection against opponent in canonical coordinate space
+                        val targetAnchorX = if (arrow.shooterIsLeft) CANONICAL_P2_ANCHOR_X else CANONICAL_P1_ANCHOR_X
                         val collision = ArcheryPhysics.checkCollision(
                             point = Offset(arrow.x, arrow.y),
                             targetAnchorX = targetAnchorX,
-                            groundY = groundY,
+                            groundY = CANONICAL_GROUND_Y,
                             arrowAngle = arrow.angleDegrees
                         )
 
-                        if (collision.hitZone != ArcheryHitZone.NONE && !arrow.hasProcessedImpact) {
+                        val canCheckCollision = (!isNearbyMode || isHost)
+                        if (canCheckCollision && collision.hitZone != ArcheryHitZone.NONE && !arrow.hasProcessedImpact) {
                             handleArrowImpact(arrow, targetIsP2 = arrow.shooterIsLeft, hitResult = collision)
                             deadArrows.add(arrow)
-                        } else if (arrow.x <= p1PlatformEnd && arrow.y >= groundY + 4f) {
+                        } else if (arrow.x <= CANONICAL_P1_PLATFORM_END && arrow.y >= CANONICAL_GROUND_Y + 4f && (!arrow.shooterIsLeft || canCheckCollision)) {
                             arrow.isFlying = false
                             deadArrows.add(arrow)
-                        } else if (arrow.x >= p2PlatformStart && arrow.y >= groundY + 4f) {
+                        } else if (arrow.x >= CANONICAL_P2_PLATFORM_START && arrow.y >= CANONICAL_GROUND_Y + 4f && (arrow.shooterIsLeft || canCheckCollision)) {
                             arrow.isFlying = false
                             deadArrows.add(arrow)
-                        } else if (arrow.y > arenaHeight + 60f || arrow.x < -60f || arrow.x > arenaWidth + 60f || arrow.y < -150f) {
+                        } else if (arrow.y > CANONICAL_ARENA_HEIGHT + 60f || arrow.x < -60f || arrow.x > CANONICAL_ARENA_WIDTH + 60f || arrow.y < -150f) {
                             arrow.isFlying = false
                             deadArrows.add(arrow)
                         }
@@ -570,7 +785,7 @@ fun ArcheryGameView(
             val waitMs = kotlin.random.Random.nextLong(profile.minDelayMs, profile.maxDelayMs)
             delay(waitMs)
 
-            if (p2Health > 0 && p1Health > 0 && !isTransitioningRound && !showMatchWonDialog && arenaWidth > 0f && !isCountdownBlockingInput) {
+            if (p2Health > 0 && p1Health > 0 && !isTransitioningRound && !showMatchWonDialog && !isCountdownBlockingInput) {
                 // Bot begins drawing bow
                 p2AnimState = ArcheryCharacterAnimState.AIMING
                 p2DragPower = kotlin.random.Random.nextFloat().coerceIn(0.45f, 0.85f)
@@ -579,15 +794,11 @@ fun ArcheryGameView(
                 val holdMs = kotlin.random.Random.nextLong(profile.holdMinMs, profile.holdMaxMs)
                 delay(holdMs)
 
-                if (p2Health > 0 && !isTransitioningRound && !showMatchWonDialog && arenaWidth > 0f && !isCountdownBlockingInput) {
-                    val groundY = arenaHeight * 0.54f
-                    val botAnchorX = arenaWidth * 0.83f
-                    val playerAnchorX = arenaWidth * 0.17f
-
+                if (p2Health > 0 && !isTransitioningRound && !showMatchWonDialog && !isCountdownBlockingInput) {
                     val botShot = ArcheryBot.calculateShot(
-                        botAnchorX = botAnchorX,
-                        playerAnchorX = playerAnchorX,
-                        groundY = groundY,
+                        botAnchorX = CANONICAL_P2_ANCHOR_X,
+                        playerAnchorX = CANONICAL_P1_ANCHOR_X,
+                        groundY = CANONICAL_GROUND_Y,
                         difficulty = difficulty
                     )
                     // The bot's elevation above horizontal
@@ -596,12 +807,9 @@ fun ArcheryGameView(
                     p2VisualAngleDeg = botElevation
                     p2AnimState = ArcheryCharacterAnimState.IDLE
 
-                    val launchX = botAnchorX - 18f
-                    val launchY = groundY - 75f
-
                     val arrow = ArrowProjectile(
-                        x = launchX,
-                        y = launchY,
+                        x = CANONICAL_P2_CENTER_X,
+                        y = CANONICAL_P2_CENTER_Y,
                         vx = botShot.vx,
                         vy = botShot.vy,
                         angleDegrees = botShot.angleDegrees,
@@ -609,8 +817,7 @@ fun ArcheryGameView(
                     )
                     flyingArrows.add(arrow)
 
-                    // Record previous bot shot reference
-                    p2PreviousShots.add(0, ShotAngleReference(botElevation, botShot.power, launchX, launchY, false))
+                    p2PreviousShots.add(0, ShotAngleReference(botElevation, botShot.power, CANONICAL_P2_CENTER_X, CANONICAL_P2_CENTER_Y, false))
                     if (p2PreviousShots.size > 5) p2PreviousShots.removeAt(p2PreviousShots.lastIndex)
 
                     vibrate()
@@ -836,20 +1043,14 @@ fun ArcheryGameView(
 
                             fun getArenaW() = if (arenaWidth > 0f) arenaWidth else size.width.toFloat()
                             fun getArenaH() = if (arenaHeight > 0f) arenaHeight else size.height.toFloat()
-                            fun getGroundY() = getArenaH() * 0.54f
-                            fun getP1CenterX() = getArenaW() * 0.17f + 18f
-                            fun getP1CenterY() = getGroundY() - 75f
-                            fun getP2CenterX() = getArenaW() * 0.83f - 18f
-                            fun getP2CenterY() = getGroundY() - 75f
 
                             // Single Authoritative Aim Vector: Supports both Point Mode (drag in front) and Pull-Back Mode (pull behind)
-                            fun updateP1(pos: Offset) {
+                            fun updateP1(pos: Offset, forceSend: Boolean = false) {
                                 p1FingerPos = pos
-                                val p1CenterX = getP1CenterX()
-                                val p1CenterY = getP1CenterY()
-                                val dx = pos.x - p1CenterX
-                                val dy = pos.y - p1CenterY // Screen Y: dy > 0 is downward, dy < 0 is upward
-                                val dist = hypot(dx, dy)
+                                val cPos = screenToCanonical(pos)
+                                val dx = cPos.x - CANONICAL_P1_CENTER_X
+                                val dy = cPos.y - CANONICAL_P1_CENTER_Y // Screen Y: dy > 0 is downward, dy < 0 is upward
+                                val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
 
                                 val isPull = dx < 0f
                                 p1IsPullMode = isPull
@@ -873,15 +1074,25 @@ fun ArcheryGameView(
                                     p1VisualAngleDeg = deg // Strict 1:1 synchronization with gesture line
                                 }
                                 p1DragPower = (dist / 220f).coerceIn(0.15f, 1.0f)
+
+                                if (isNearbyMode && localPlayerIsLeft) {
+                                    val now = System.currentTimeMillis()
+                                    if (forceSend || now - p1LastAimSendTime > 45L) {
+                                        p1LastAimSendTime = now
+                                        multiplayerManager.sendAction(
+                                            "ARCHERY_AIM",
+                                            "1,%.1f,%.2f,%d".format(java.util.Locale.US, p1TargetAngleDeg, p1DragPower, if (p1IsPullMode) 1 else 0)
+                                        )
+                                    }
+                                }
                             }
 
-                            fun updateP2(pos: Offset) {
+                            fun updateP2(pos: Offset, forceSend: Boolean = false) {
                                 p2FingerPos = pos
-                                val p2CenterX = getP2CenterX()
-                                val p2CenterY = getP2CenterY()
-                                val forwardDx = p2CenterX - pos.x // Leftward forward distance (> 0 when in front, < 0 when behind)
-                                val dy = pos.y - p2CenterY
-                                val dist = hypot(pos.x - p2CenterX, dy)
+                                val cPos = screenToCanonical(pos)
+                                val forwardDx = CANONICAL_P2_CENTER_X - cPos.x // Leftward forward distance (> 0 in front, < 0 behind)
+                                val dy = cPos.y - CANONICAL_P2_CENTER_Y
+                                val dist = hypot((cPos.x - CANONICAL_P2_CENTER_X).toDouble(), dy.toDouble()).toFloat()
 
                                 val isPull = forwardDx < 0f // finger is behind Player 2 (to the right)
                                 p2IsPullMode = isPull
@@ -902,20 +1113,31 @@ fun ArcheryGameView(
                                     p2VisualAngleDeg = deg // Strict 1:1 synchronization with gesture line
                                 }
                                 p2DragPower = (dist / 220f).coerceIn(0.15f, 1.0f)
+
+                                if (isNearbyMode && !localPlayerIsLeft) {
+                                    val now = System.currentTimeMillis()
+                                    if (forceSend || now - p2LastAimSendTime > 45L) {
+                                        p2LastAimSendTime = now
+                                        multiplayerManager.sendAction(
+                                            "ARCHERY_AIM",
+                                            "2,%.1f,%.2f,%d".format(java.util.Locale.US, p2TargetAngleDeg, p2DragPower, if (p2IsPullMode) 1 else 0)
+                                        )
+                                    }
+                                }
                             }
 
                             val firstDown = awaitFirstDown(requireUnconsumed = false)
                             val curW = getArenaW()
                             val canTouchP1 = (currentSelectedMode != GameMode.BLUETOOTH_1V1 || localPlayerIsLeft)
                             val canTouchP2 = (currentSelectedMode == GameMode.LOCAL_1V1 || (currentSelectedMode == GameMode.BLUETOOTH_1V1 && !localPlayerIsLeft))
-                            val isInputBlocked = !isNearbyMode && currentIsCountdownBlockingInput
+                            val isInputBlocked = currentIsCountdownBlockingInput
 
                             // Assign pointer based on which half was touched
                             if (!isInputBlocked && canTouchP1 && firstDown.position.x < curW * 0.5f && currentP1Health > 0 && currentRoundWinner == null) {
                                 p1PointerId = firstDown.id
                                 p1IsDragging = true
                                 p1AnimState = ArcheryCharacterAnimState.AIMING
-                                updateP1(firstDown.position)
+                                updateP1(firstDown.position, forceSend = true)
                                 p1VisualAngleDeg = p1TargetAngleDeg // Instant initial visual sync! Zero jump!
                                 vibrate()
                                 firstDown.consume()
@@ -923,7 +1145,7 @@ fun ArcheryGameView(
                                 p2PointerId = firstDown.id
                                 p2IsDragging = true
                                 p2AnimState = ArcheryCharacterAnimState.AIMING
-                                updateP2(firstDown.position)
+                                updateP2(firstDown.position, forceSend = true)
                                 p2VisualAngleDeg = p2TargetAngleDeg // Instant initial visual sync! Zero jump!
                                 vibrate()
                                 firstDown.consume()
@@ -942,7 +1164,7 @@ fun ArcheryGameView(
                                             p1PointerId = change.id
                                             p1IsDragging = true
                                             p1AnimState = ArcheryCharacterAnimState.AIMING
-                                            updateP1(change.position)
+                                            updateP1(change.position, forceSend = true)
                                             p1VisualAngleDeg = p1TargetAngleDeg
                                             vibrate()
                                             change.consume()
@@ -950,7 +1172,7 @@ fun ArcheryGameView(
                                             p2PointerId = change.id
                                             p2IsDragging = true
                                             p2AnimState = ArcheryCharacterAnimState.AIMING
-                                            updateP2(change.position)
+                                            updateP2(change.position, forceSend = true)
                                             p2VisualAngleDeg = p2TargetAngleDeg
                                             vibrate()
                                             change.consume()
@@ -963,8 +1185,6 @@ fun ArcheryGameView(
                                     val change = event.changes.find { it.id == id }
                                     if (change == null || !change.pressed) {
                                         // Finger released: Fire projectile at exact target angle and power!
-                                        val p1CenterX = getP1CenterX()
-                                        val p1CenterY = getP1CenterY()
                                         if (p1IsDragging && getArenaW() > 0f) {
                                             val elevation = p1TargetAngleDeg
                                             val power = p1DragPower
@@ -972,10 +1192,12 @@ fun ArcheryGameView(
                                             val rad = elevation * (PI / 180.0)
                                             val vx = (cos(rad) * launchSpeed).toFloat()
                                             val vy = (-sin(rad) * launchSpeed).toFloat()
+                                            val arrowId = System.nanoTime()
 
                                             val arrow = ArrowProjectile(
-                                                x = p1CenterX,
-                                                y = p1CenterY,
+                                                id = arrowId,
+                                                x = CANONICAL_P1_CENTER_X,
+                                                y = CANONICAL_P1_CENTER_Y,
                                                 vx = vx,
                                                 vy = vy,
                                                 angleDegrees = -elevation,
@@ -983,13 +1205,18 @@ fun ArcheryGameView(
                                             )
                                             flyingArrows.add(arrow)
 
-                                            p1PreviousShots.add(0, ShotAngleReference(elevation, power, p1CenterX, p1CenterY, true, isPullMode = p1IsPullMode))
+                                            p1PreviousShots.add(0, ShotAngleReference(elevation, power, CANONICAL_P1_CENTER_X, CANONICAL_P1_CENTER_Y, true, isPullMode = p1IsPullMode))
                                             if (p1PreviousShots.size > 5) p1PreviousShots.removeAt(p1PreviousShots.lastIndex)
 
                                             vibrate()
                                             if (isNearbyMode) {
-                                                multiplayerManager.sendAction("ARCHERY_FIRE", "1,$elevation,$power")
+                                                multiplayerManager.sendAction(
+                                                    "ARCHERY_FIRE",
+                                                    "1,%.1f,%.2f,%d".format(java.util.Locale.US, elevation, power, arrowId)
+                                                )
                                             }
+                                        } else if (isNearbyMode && localPlayerIsLeft) {
+                                            multiplayerManager.sendAction("ARCHERY_CANCEL_AIM", "1")
                                         }
                                         p1IsDragging = false
                                         p1FingerPos = null
@@ -1007,8 +1234,6 @@ fun ArcheryGameView(
                                     val change = event.changes.find { it.id == id }
                                     if (change == null || !change.pressed) {
                                         // Finger released: Fire projectile at exact target angle and power!
-                                        val p2CenterX = getP2CenterX()
-                                        val p2CenterY = getP2CenterY()
                                         if (p2IsDragging && getArenaW() > 0f) {
                                             val elevation = p2TargetAngleDeg
                                             val power = p2DragPower
@@ -1016,10 +1241,12 @@ fun ArcheryGameView(
                                             val rad = elevation * (PI / 180.0)
                                             val vx = (-cos(rad) * launchSpeed).toFloat()
                                             val vy = (-sin(rad) * launchSpeed).toFloat()
+                                            val arrowId = System.nanoTime()
 
                                             val arrow = ArrowProjectile(
-                                                x = p2CenterX,
-                                                y = p2CenterY,
+                                                id = arrowId,
+                                                x = CANONICAL_P2_CENTER_X,
+                                                y = CANONICAL_P2_CENTER_Y,
                                                 vx = vx,
                                                 vy = vy,
                                                 angleDegrees = -180f + elevation,
@@ -1027,13 +1254,18 @@ fun ArcheryGameView(
                                             )
                                             flyingArrows.add(arrow)
 
-                                            p2PreviousShots.add(0, ShotAngleReference(elevation, power, p2CenterX, p2CenterY, false, isPullMode = p2IsPullMode))
+                                            p2PreviousShots.add(0, ShotAngleReference(elevation, power, CANONICAL_P2_CENTER_X, CANONICAL_P2_CENTER_Y, false, isPullMode = p2IsPullMode))
                                             if (p2PreviousShots.size > 5) p2PreviousShots.removeAt(p2PreviousShots.lastIndex)
 
                                             vibrate()
                                             if (isNearbyMode) {
-                                                multiplayerManager.sendAction("ARCHERY_FIRE", "2,$elevation,$power")
+                                                multiplayerManager.sendAction(
+                                                    "ARCHERY_FIRE",
+                                                    "2,%.1f,%.2f,%d".format(java.util.Locale.US, elevation, power, arrowId)
+                                                )
                                             }
+                                        } else if (isNearbyMode && !localPlayerIsLeft) {
+                                            multiplayerManager.sendAction("ARCHERY_CANCEL_AIM", "2")
                                         }
                                         p2IsDragging = false
                                         p2FingerPos = null
@@ -1062,311 +1294,305 @@ fun ArcheryGameView(
                         arenaHeight = arenaH
                     }
 
-                    val groundY = arenaH * 0.54f
-                    val p1AnchorX = arenaW * 0.17f
-                    val p2AnchorX = arenaW * 0.83f
+                    val scaleX = if (arenaW > 0f) arenaW / CANONICAL_ARENA_WIDTH else 1f
+                    val scaleY = if (arenaH > 0f) arenaH / CANONICAL_ARENA_HEIGHT else 1f
 
-                    val p1PlatformEnd = arenaW * 0.28f
-                    val p2PlatformStart = arenaW * 0.72f
+                    scale(scaleX = scaleX, scaleY = scaleY, pivot = Offset.Zero) {
+                        val groundY = CANONICAL_GROUND_Y
+                        val p1AnchorX = CANONICAL_P1_ANCHOR_X
+                        val p2AnchorX = CANONICAL_P2_ANCHOR_X
 
-                    val p1CenterX = p1AnchorX + 18f
-                    val p1CenterY = groundY - 75f
-                    val p2CenterX = p2AnchorX - 18f
-                    val p2CenterY = groundY - 75f
+                        val p1PlatformEnd = CANONICAL_P1_PLATFORM_END
+                        val p2PlatformStart = CANONICAL_P2_PLATFORM_START
 
-                    // --------------------------------------------------------
-                    // 1. OPEN AIR CANYON BACKGROUND ATMOSPHERE
-                    // --------------------------------------------------------
-                    val chasmColor = if (isDark) Color(0xFF030712).copy(alpha = 0.55f) else Color(0xFFE2E8F0).copy(alpha = 0.45f)
-                    drawRect(
-                        color = chasmColor,
-                        topLeft = Offset(0f, groundY + 30f),
-                        size = androidx.compose.ui.geometry.Size(arenaW, arenaH - groundY)
-                    )
+                        val p1CenterX = CANONICAL_P1_CENTER_X
+                        val p1CenterY = CANONICAL_P1_CENTER_Y
+                        val p2CenterX = CANONICAL_P2_CENTER_X
+                        val p2CenterY = CANONICAL_P2_CENTER_Y
 
-                    // Wind streaks
-                    val windY1 = groundY - 40f
-                    val windY2 = groundY + 60f
-                    drawLine(
-                        color = (if (isDark) Color.White else Color.Black).copy(alpha = 0.05f),
-                        start = Offset(arenaW * 0.35f, windY1),
-                        end = Offset(arenaW * 0.65f, windY1),
-                        strokeWidth = 1.5f,
-                        cap = StrokeCap.Round
-                    )
-                    drawLine(
-                        color = (if (isDark) Color.White else Color.Black).copy(alpha = 0.04f),
-                        start = Offset(arenaW * 0.40f, windY2),
-                        end = Offset(arenaW * 0.60f, windY2),
-                        strokeWidth = 1.5f,
-                        cap = StrokeCap.Round
-                    )
+                        // --------------------------------------------------------
+                        // 1. OPEN AIR CANYON BACKGROUND ATMOSPHERE
+                        // --------------------------------------------------------
+                        val chasmColor = if (isDark) Color(0xFF030712).copy(alpha = 0.55f) else Color(0xFFE2E8F0).copy(alpha = 0.45f)
+                        drawRect(
+                            color = chasmColor,
+                            topLeft = Offset(0f, groundY + 30f),
+                            size = androidx.compose.ui.geometry.Size(CANONICAL_ARENA_WIDTH, CANONICAL_ARENA_HEIGHT - groundY)
+                        )
 
-                    // --------------------------------------------------------
-                    // 2. SEPARATE PLATFORMS
-                    // --------------------------------------------------------
-                    drawArcheryPlatform(
-                        isLeft = true,
-                        platformStartX = 0f,
-                        platformEndX = p1PlatformEnd,
-                        groundY = groundY,
-                        isDark = isDark
-                    )
-
-                    drawArcheryPlatform(
-                        isLeft = false,
-                        platformStartX = p2PlatformStart,
-                        platformEndX = arenaW,
-                        groundY = groundY,
-                        isDark = isDark
-                    )
-
-                    // --------------------------------------------------------
-                    // 3. PREVIOUS SHOT ANGLE MARKERS (3-5 RECENT SHOTS)
-                    // --------------------------------------------------------
-                    drawPreviousShotMarkers(p1PreviousShots, PlayfulOrange)
-                    drawPreviousShotMarkers(p2PreviousShots, PlayfulPurple)
-
-                    // --------------------------------------------------------
-                    // 4. DIRECT GESTURE AIM LINES (POINT FORWARD OR PULL BACKWARD)
-                    // --------------------------------------------------------
-                    if (p1IsDragging && p1FingerPos != null) {
-                        val bowOrigin = Offset(p1CenterX, p1CenterY)
-                        val rad = p1TargetAngleDeg * (PI / 180.0)
-                        val shotDirX = cos(rad).toFloat()
-                        val shotDirY = -sin(rad).toFloat()
-
-                        val finger = p1FingerPos!!
-                        val dist = hypot(finger.x - p1CenterX, finger.y - p1CenterY)
-                        val visualLength = dist.coerceIn(36f, 240f)
-
-                        // In Point mode: line extends from bow forward toward finger
-                        // In Pull-back mode: line extends from bow backward to the finger
-                        val lineDirX = if (p1IsPullMode) -shotDirX else shotDirX
-                        val lineDirY = if (p1IsPullMode) -shotDirY else shotDirY
-                        val gestureEnd = Offset(p1CenterX + lineDirX * visualLength, p1CenterY + lineDirY * visualLength)
-
-                        // Outer soft glowing aura
+                        // Wind streaks
+                        val windY1 = groundY - 40f
+                        val windY2 = groundY + 60f
                         drawLine(
-                            color = PlayfulOrange.copy(alpha = 0.22f),
-                            start = bowOrigin,
-                            end = gestureEnd,
-                            strokeWidth = 6.0f,
+                            color = (if (isDark) Color.White else Color.Black).copy(alpha = 0.05f),
+                            start = Offset(CANONICAL_ARENA_WIDTH * 0.35f, windY1),
+                            end = Offset(CANONICAL_ARENA_WIDTH * 0.65f, windY1),
+                            strokeWidth = 1.5f,
                             cap = StrokeCap.Round
                         )
-                        // Inner crisp direct gesture line
                         drawLine(
-                            color = PlayfulOrange.copy(alpha = 0.85f),
-                            start = bowOrigin,
-                            end = gestureEnd,
-                            strokeWidth = 2.4f,
+                            color = (if (isDark) Color.White else Color.Black).copy(alpha = 0.04f),
+                            start = Offset(CANONICAL_ARENA_WIDTH * 0.40f, windY2),
+                            end = Offset(CANONICAL_ARENA_WIDTH * 0.60f, windY2),
+                            strokeWidth = 1.5f,
                             cap = StrokeCap.Round
                         )
-                        // Touch indicator node (●) at the gesture end (finger position)
-                        drawCircle(
-                            color = PlayfulOrange.copy(alpha = 0.30f),
-                            radius = 11f,
-                            center = gestureEnd
+
+                        // --------------------------------------------------------
+                        // 2. SEPARATE PLATFORMS
+                        // --------------------------------------------------------
+                        drawArcheryPlatform(
+                            isLeft = true,
+                            platformStartX = 0f,
+                            platformEndX = p1PlatformEnd,
+                            groundY = groundY,
+                            isDark = isDark
                         )
-                        drawCircle(
+
+                        drawArcheryPlatform(
+                            isLeft = false,
+                            platformStartX = p2PlatformStart,
+                            platformEndX = CANONICAL_ARENA_WIDTH,
+                            groundY = groundY,
+                            isDark = isDark
+                        )
+
+                        // --------------------------------------------------------
+                        // 3. PREVIOUS SHOT ANGLE MARKERS (3-5 RECENT SHOTS)
+                        // --------------------------------------------------------
+                        drawPreviousShotMarkers(p1PreviousShots, PlayfulOrange)
+                        drawPreviousShotMarkers(p2PreviousShots, PlayfulPurple)
+
+                        // --------------------------------------------------------
+                        // 4. DIRECT GESTURE AIM LINES (POINT FORWARD OR PULL BACKWARD)
+                        // --------------------------------------------------------
+                        if (p1IsDragging) {
+                            val bowOrigin = Offset(p1CenterX, p1CenterY)
+                            val rad = p1TargetAngleDeg * (PI / 180.0)
+                            val shotDirX = cos(rad).toFloat()
+                            val shotDirY = -sin(rad).toFloat()
+
+                            val visualLength = (p1DragPower * 220f).coerceIn(36f, 240f)
+
+                            val lineDirX = if (p1IsPullMode) -shotDirX else shotDirX
+                            val lineDirY = if (p1IsPullMode) -shotDirY else shotDirY
+                            val gestureEnd = Offset(p1CenterX + lineDirX * visualLength, p1CenterY + lineDirY * visualLength)
+
+                            // Outer soft glowing aura
+                            drawLine(
+                                color = PlayfulOrange.copy(alpha = 0.22f),
+                                start = bowOrigin,
+                                end = gestureEnd,
+                                strokeWidth = 6.0f,
+                                cap = StrokeCap.Round
+                            )
+                            // Inner crisp direct gesture line
+                            drawLine(
+                                color = PlayfulOrange.copy(alpha = 0.85f),
+                                start = bowOrigin,
+                                end = gestureEnd,
+                                strokeWidth = 2.4f,
+                                cap = StrokeCap.Round
+                            )
+                            // Touch indicator node (●) at the gesture end (finger position)
+                            drawCircle(
+                                color = PlayfulOrange.copy(alpha = 0.30f),
+                                radius = 11f,
+                                center = gestureEnd
+                            )
+                            drawCircle(
+                                color = PlayfulOrange,
+                                radius = 6f,
+                                center = gestureEnd
+                            )
+                            drawCircle(
+                                color = Color.White,
+                                radius = 2.5f,
+                                center = gestureEnd
+                            )
+                        }
+
+                        if (p2IsDragging) {
+                            val bowOrigin = Offset(p2CenterX, p2CenterY)
+                            val rad = p2TargetAngleDeg * (PI / 180.0)
+                            val shotDirX = -cos(rad).toFloat()
+                            val shotDirY = -sin(rad).toFloat()
+
+                            val visualLength = (p2DragPower * 220f).coerceIn(36f, 240f)
+
+                            val lineDirX = if (p2IsPullMode) -shotDirX else shotDirX
+                            val lineDirY = if (p2IsPullMode) -shotDirY else shotDirY
+                            val gestureEnd = Offset(p2CenterX + lineDirX * visualLength, p2CenterY + lineDirY * visualLength)
+
+                            drawLine(
+                                color = PlayfulPurple.copy(alpha = 0.22f),
+                                start = bowOrigin,
+                                end = gestureEnd,
+                                strokeWidth = 6.0f,
+                                cap = StrokeCap.Round
+                            )
+                            drawLine(
+                                color = PlayfulPurple.copy(alpha = 0.85f),
+                                start = bowOrigin,
+                                end = gestureEnd,
+                                strokeWidth = 2.4f,
+                                cap = StrokeCap.Round
+                            )
+                            drawCircle(
+                                color = PlayfulPurple.copy(alpha = 0.30f),
+                                radius = 11f,
+                                center = gestureEnd
+                            )
+                            drawCircle(
+                                color = PlayfulPurple,
+                                radius = 6f,
+                                center = gestureEnd
+                            )
+                            drawCircle(
+                                color = Color.White,
+                                radius = 2.5f,
+                                center = gestureEnd
+                            )
+                        }
+
+                        // --------------------------------------------------------
+                        // 5. TRAJECTORY PREVIEWS (EXACT SAME PHYSICS AS ARROW)
+                        // --------------------------------------------------------
+                        if (p1IsDragging) {
+                            val launchSpeed = 500f + (p1DragPower * 850f)
+                            val rad = p1TargetAngleDeg * (PI / 180.0)
+                            val vx = (cos(rad) * launchSpeed).toFloat()
+                            val vy = (-sin(rad) * launchSpeed).toFloat()
+
+                            val preview = ArcheryPhysics.calculateTrajectoryPreview(
+                                startX = p1CenterX,
+                                startY = p1CenterY,
+                                vx = vx,
+                                vy = vy,
+                                maxSteps = 24
+                            )
+                            for (i in preview.indices) {
+                                val pt = preview[i]
+                                val alpha = (1f - (i.toFloat() / preview.size.toFloat())).coerceIn(0.20f, 0.85f)
+                                drawCircle(
+                                    color = PlayfulOrange.copy(alpha = alpha),
+                                    radius = 2.8f,
+                                    center = pt
+                                )
+                            }
+                        }
+
+                        if (p2IsDragging) {
+                            val launchSpeed = 500f + (p2DragPower * 850f)
+                            val rad = p2TargetAngleDeg * (PI / 180.0)
+                            val vx = (-cos(rad) * launchSpeed).toFloat()
+                            val vy = (-sin(rad) * launchSpeed).toFloat()
+
+                            val preview = ArcheryPhysics.calculateTrajectoryPreview(
+                                startX = p2CenterX,
+                                startY = p2CenterY,
+                                vx = vx,
+                                vy = vy,
+                                maxSteps = 24
+                            )
+                            for (i in preview.indices) {
+                                val pt = preview[i]
+                                val alpha = (1f - (i.toFloat() / preview.size.toFloat())).coerceIn(0.20f, 0.85f)
+                                drawCircle(
+                                    color = PlayfulPurple.copy(alpha = alpha),
+                                    radius = 2.8f,
+                                    center = pt
+                                )
+                            }
+                        }
+
+                        // --------------------------------------------------------
+                        // 6. STICK FIGURE CHARACTERS WITH UNIFIED AUTHORITATIVE ROTATION
+                        // --------------------------------------------------------
+                        drawArcheryStickFigure(
+                            isLeft = true,
+                            anchorX = p1AnchorX,
+                            groundY = groundY,
+                            health = p1Health,
+                            animState = p1AnimState,
+                            aimAngleDegrees = -p1TargetAngleDeg,
+                            aimPower = if (p1IsDragging || p1AnimState == ArcheryCharacterAnimState.AIMING) p1DragPower else 0f,
+                            staggerProgress = p1StaggerProgress,
+                            lastHitZone = p1LastHitZone,
+                            attachedArrows = p1AttachedArrows,
                             color = PlayfulOrange,
-                            radius = 6f,
-                            center = gestureEnd
+                            bowColor = Color(0xFFD97706),
+                            strokeWidth = 7.5f,
+                            timeMs = _tick
                         )
-                        drawCircle(
-                            color = Color.White,
-                            radius = 2.5f,
-                            center = gestureEnd
-                        )
-                    }
 
-                    if (p2IsDragging && p2FingerPos != null) {
-                        val bowOrigin = Offset(p2CenterX, p2CenterY)
-                        val rad = p2TargetAngleDeg * (PI / 180.0)
-                        val shotDirX = -cos(rad).toFloat()
-                        val shotDirY = -sin(rad).toFloat()
-
-                        val finger = p2FingerPos!!
-                        val dist = hypot(finger.x - p2CenterX, finger.y - p2CenterY)
-                        val visualLength = dist.coerceIn(36f, 240f)
-
-                        // In Point mode: line extends forward (leftward) along shotDir
-                        // In Pull-back mode: line extends backward (rightward) along -shotDir
-                        val lineDirX = if (p2IsPullMode) -shotDirX else shotDirX
-                        val lineDirY = if (p2IsPullMode) -shotDirY else shotDirY
-                        val gestureEnd = Offset(p2CenterX + lineDirX * visualLength, p2CenterY + lineDirY * visualLength)
-
-                        // Outer soft glowing aura
-                        drawLine(
-                            color = PlayfulPurple.copy(alpha = 0.22f),
-                            start = bowOrigin,
-                            end = gestureEnd,
-                            strokeWidth = 6.0f,
-                            cap = StrokeCap.Round
-                        )
-                        // Inner crisp direct gesture line
-                        drawLine(
-                            color = PlayfulPurple.copy(alpha = 0.85f),
-                            start = bowOrigin,
-                            end = gestureEnd,
-                            strokeWidth = 2.4f,
-                            cap = StrokeCap.Round
-                        )
-                        // Touch indicator node (●) at the gesture end
-                        drawCircle(
-                            color = PlayfulPurple.copy(alpha = 0.30f),
-                            radius = 11f,
-                            center = gestureEnd
-                        )
-                        drawCircle(
+                        drawArcheryStickFigure(
+                            isLeft = false,
+                            anchorX = p2AnchorX,
+                            groundY = groundY,
+                            health = p2Health,
+                            animState = p2AnimState,
+                            aimAngleDegrees = -180f + p2TargetAngleDeg,
+                            aimPower = if (p2IsDragging || p2AnimState == ArcheryCharacterAnimState.AIMING) p2DragPower else 0f,
+                            staggerProgress = p2StaggerProgress,
+                            lastHitZone = p2LastHitZone,
+                            attachedArrows = p2AttachedArrows,
                             color = PlayfulPurple,
-                            radius = 6f,
-                            center = gestureEnd
+                            bowColor = Color(0xFFD97706),
+                            strokeWidth = 7.5f,
+                            timeMs = _tick
                         )
-                        drawCircle(
-                            color = Color.White,
-                            radius = 2.5f,
-                            center = gestureEnd
-                        )
-                    }
 
-                    // --------------------------------------------------------
-                    // 5. TRAJECTORY PREVIEWS (EXACT SAME PHYSICS AS ARROW)
-                    // --------------------------------------------------------
-                    if (p1IsDragging) {
-                        val launchSpeed = 500f + (p1DragPower * 850f)
-                        val rad = p1TargetAngleDeg * (PI / 180.0)
-                        val vx = (cos(rad) * launchSpeed).toFloat()
-                        val vy = (-sin(rad) * launchSpeed).toFloat()
+                        // --------------------------------------------------------
+                        // 7. SIMULTANEOUS FLYING ARROWS RENDERING
+                        // --------------------------------------------------------
+                        for (arrow in flyingArrows) {
+                            if (!arrow.isFlying) continue
 
-                        val preview = ArcheryPhysics.calculateTrajectoryPreview(
-                            startX = p1CenterX,
-                            startY = p1CenterY,
-                            vx = vx,
-                            vy = vy,
-                            maxSteps = 24
-                        )
-                        for (i in preview.indices) {
-                            val pt = preview[i]
-                            val alpha = (1f - (i.toFloat() / preview.size.toFloat())).coerceIn(0.20f, 0.85f)
-                            drawCircle(
-                                color = PlayfulOrange.copy(alpha = alpha),
-                                radius = 2.8f,
-                                center = pt
+                            val arrowOffset = Offset(arrow.x, arrow.y)
+                            val rad = (arrow.angleDegrees * PI / 180f).toFloat()
+                            val cosA = cos(rad)
+                            val sinA = sin(rad)
+                            val shaftLen = 42f
+
+                            // Draw arrow trail
+                            for (i in arrow.trail.indices) {
+                                val trailPt = arrow.trail[i]
+                                val progress = (i + 1).toFloat() / arrow.trail.size.toFloat()
+                                drawCircle(
+                                    color = Color.LightGray.copy(alpha = progress * 0.4f),
+                                    radius = 2f * progress,
+                                    center = trailPt
+                                )
+                            }
+
+                            // Arrow shaft
+                            drawLine(
+                                color = Color(0xFF78350F),
+                                start = Offset(arrow.x - cosA * shaftLen, arrow.y - sinA * shaftLen),
+                                end = arrowOffset,
+                                strokeWidth = 3.5f,
+                                cap = StrokeCap.Round
+                            )
+                            // Metal arrowhead
+                            drawLine(
+                                color = Color(0xFFF1F5F9),
+                                start = Offset(arrow.x - cosA * 8f, arrow.y - sinA * 8f),
+                                end = arrowOffset,
+                                strokeWidth = 5.5f,
+                                cap = StrokeCap.Round
+                            )
+                            // Feathers
+                            val featherBack = Offset(arrow.x - cosA * (shaftLen - 4f), arrow.y - sinA * (shaftLen - 4f))
+                            val fletchColor = if (arrow.shooterIsLeft) PlayfulOrange else PlayfulPurple
+                            drawLine(
+                                color = fletchColor,
+                                start = Offset(arrow.x - cosA * shaftLen, arrow.y - sinA * shaftLen),
+                                end = featherBack,
+                                strokeWidth = 6f,
+                                cap = StrokeCap.Round
                             )
                         }
-                    }
-
-                    if (p2IsDragging) {
-                        val launchSpeed = 500f + (p2DragPower * 850f)
-                        val rad = p2TargetAngleDeg * (PI / 180.0)
-                        val vx = (-cos(rad) * launchSpeed).toFloat()
-                        val vy = (-sin(rad) * launchSpeed).toFloat()
-
-                        val preview = ArcheryPhysics.calculateTrajectoryPreview(
-                            startX = p2CenterX,
-                            startY = p2CenterY,
-                            vx = vx,
-                            vy = vy,
-                            maxSteps = 24
-                        )
-                        for (i in preview.indices) {
-                            val pt = preview[i]
-                            val alpha = (1f - (i.toFloat() / preview.size.toFloat())).coerceIn(0.20f, 0.85f)
-                            drawCircle(
-                                color = PlayfulPurple.copy(alpha = alpha),
-                                radius = 2.8f,
-                                center = pt
-                            )
-                        }
-                    }
-
-                    // --------------------------------------------------------
-                    // 6. STICK FIGURE CHARACTERS WITH UNIFIED AUTHORITATIVE ROTATION
-                    // --------------------------------------------------------
-                    drawArcheryStickFigure(
-                        isLeft = true,
-                        anchorX = p1AnchorX,
-                        groundY = groundY,
-                        health = p1Health,
-                        animState = p1AnimState,
-                        aimAngleDegrees = -p1TargetAngleDeg,
-                        aimPower = if (p1IsDragging) p1DragPower else 0f,
-                        staggerProgress = p1StaggerProgress,
-                        lastHitZone = p1LastHitZone,
-                        attachedArrows = p1AttachedArrows,
-                        color = PlayfulOrange,
-                        bowColor = Color(0xFFD97706),
-                        strokeWidth = 7.5f,
-                        timeMs = _tick
-                    )
-
-                    drawArcheryStickFigure(
-                        isLeft = false,
-                        anchorX = p2AnchorX,
-                        groundY = groundY,
-                        health = p2Health,
-                        animState = p2AnimState,
-                        aimAngleDegrees = -180f + p2TargetAngleDeg,
-                        aimPower = if (p2IsDragging || p2AnimState == ArcheryCharacterAnimState.AIMING) p2DragPower else 0f,
-                        staggerProgress = p2StaggerProgress,
-                        lastHitZone = p2LastHitZone,
-                        attachedArrows = p2AttachedArrows,
-                        color = PlayfulPurple,
-                        bowColor = Color(0xFFD97706),
-                        strokeWidth = 7.5f,
-                        timeMs = _tick
-                    )
-
-                    // --------------------------------------------------------
-                    // 6. SIMULTANEOUS FLYING ARROWS RENDERING
-                    // --------------------------------------------------------
-                    for (arrow in flyingArrows) {
-                        if (!arrow.isFlying) continue
-
-                        val arrowOffset = Offset(arrow.x, arrow.y)
-                        val rad = (arrow.angleDegrees * PI / 180f).toFloat()
-                        val cosA = cos(rad)
-                        val sinA = sin(rad)
-                        val shaftLen = 42f
-
-                        // Draw arrow trail
-                        for (i in arrow.trail.indices) {
-                            val trailPt = arrow.trail[i]
-                            val progress = (i + 1).toFloat() / arrow.trail.size.toFloat()
-                            drawCircle(
-                                color = Color.LightGray.copy(alpha = progress * 0.4f),
-                                radius = 2f * progress,
-                                center = trailPt
-                            )
-                        }
-
-                        // Arrow shaft
-                        drawLine(
-                            color = Color(0xFF78350F),
-                            start = Offset(arrow.x - cosA * shaftLen, arrow.y - sinA * shaftLen),
-                            end = arrowOffset,
-                            strokeWidth = 3.5f,
-                            cap = StrokeCap.Round
-                        )
-                        // Metal arrowhead
-                        drawLine(
-                            color = Color(0xFFF1F5F9),
-                            start = Offset(arrow.x - cosA * 8f, arrow.y - sinA * 8f),
-                            end = arrowOffset,
-                            strokeWidth = 5.5f,
-                            cap = StrokeCap.Round
-                        )
-                        // Feathers
-                        val featherBack = Offset(arrow.x - cosA * (shaftLen - 4f), arrow.y - sinA * (shaftLen - 4f))
-                        val fletchColor = if (arrow.shooterIsLeft) PlayfulOrange else PlayfulPurple
-                        drawLine(
-                            color = fletchColor,
-                            start = Offset(arrow.x - cosA * shaftLen, arrow.y - sinA * shaftLen),
-                            end = featherBack,
-                            strokeWidth = 6f,
-                            cap = StrokeCap.Round
-                        )
                     }
                 }
 

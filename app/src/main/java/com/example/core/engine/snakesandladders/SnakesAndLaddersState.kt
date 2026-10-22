@@ -3,8 +3,6 @@ package com.example.core.engine.snakesandladders
 import com.example.core.engine.GameState
 import com.example.core.engine.GameStatus
 import com.example.core.engine.PlayerId
-import org.json.JSONArray
-import org.json.JSONObject
 
 data class SnakesAndLaddersState(
     val playerCount: Int = 2,
@@ -34,86 +32,61 @@ data class SnakesAndLaddersState(
     }
 }
 
-fun serializeSnakesState(state: SnakesAndLaddersState, roll: Int? = state.lastDiceRoll): String {
-    val json = JSONObject()
+fun serializeSnakesState(
+    state: SnakesAndLaddersState,
+    lastRoll: Int? = null,
+    lastPlayer: PlayerId? = null
+): String {
+    val json = org.json.JSONObject()
     json.put("playerCount", state.playerCount)
-    val posArray = JSONArray()
-    state.playerPositions.forEach { posArray.put(it) }
-    json.put("playerPositions", posArray)
-    json.put("lastDiceRoll", roll ?: JSONObject.NULL)
-    json.put("lastMovePlayer", state.lastMovePlayer?.name ?: JSONObject.NULL)
-    if (state.ladderClimbed != null) {
-        val ladderArray = JSONArray()
-        ladderArray.put(state.ladderClimbed.first)
-        ladderArray.put(state.ladderClimbed.second)
-        json.put("ladderClimbed", ladderArray)
-    }
-    if (state.snakeSlid != null) {
-        val snakeArray = JSONArray()
-        snakeArray.put(state.snakeSlid.first)
-        snakeArray.put(state.snakeSlid.second)
-        json.put("snakeSlid", snakeArray)
-    }
+    val posArr = org.json.JSONArray()
+    state.playerPositions.forEach { posArr.put(it) }
+    json.put("playerPositions", posArr)
+    json.put("activePlayer", state.activePlayer.name)
+    val roll = lastRoll ?: state.lastDiceRoll
+    if (roll != null) json.put("lastDiceRoll", roll)
+    val moveP = lastPlayer ?: state.lastMovePlayer
+    if (moveP != null) json.put("lastMovePlayer", moveP.name)
     json.put("wasOvershot", state.wasOvershot)
     json.put("extraTurnGranted", state.extraTurnGranted)
-    json.put("activePlayer", state.activePlayer.name)
     when (val s = state.status) {
         is GameStatus.MatchWon -> {
-            json.put("statusType", "MatchWon")
-            json.put("winner", s.matchWinner.name)
+            json.put("status", "MatchWon")
+            json.put("matchWinner", s.matchWinner.name)
         }
-        else -> {
-            json.put("statusType", "InProgress")
-        }
+        else -> json.put("status", "InProgress")
     }
     return json.toString()
 }
 
 fun deserializeSnakesState(jsonStr: String): SnakesAndLaddersState? {
     return try {
-        val json = JSONObject(jsonStr)
-        val playerCount = json.optInt("playerCount", 2).coerceIn(2, 5)
-        val posArray = json.optJSONArray("playerPositions")
-        val positions = mutableListOf<Int>()
-        if (posArray != null) {
-            for (i in 0 until posArray.length()) {
-                positions.add(posArray.getInt(i))
-            }
+        val json = org.json.JSONObject(jsonStr)
+        val pCount = json.optInt("playerCount", 2)
+        val posArr = json.optJSONArray("playerPositions")
+        val positions = if (posArr != null) {
+            List(posArr.length()) { posArr.getInt(it) }
+        } else {
+            List(pCount) { 1 }
         }
-        while (positions.size < playerCount) {
-            positions.add(1)
-        }
-        val lastRoll = if (json.isNull("lastDiceRoll")) null else json.optInt("lastDiceRoll")
-        val lastMovePlayer = if (json.isNull("lastMovePlayer")) null else try {
-            PlayerId.valueOf(json.getString("lastMovePlayer"))
-        } catch (e: Exception) { null }
-        val ladder = if (json.has("ladderClimbed")) {
-            val arr = json.getJSONArray("ladderClimbed")
-            arr.getInt(0) to arr.getInt(1)
-        } else null
-        val snake = if (json.has("snakeSlid")) {
-            val arr = json.getJSONArray("snakeSlid")
-            arr.getInt(0) to arr.getInt(1)
-        } else null
+        val activePlayer = PlayerId.valueOf(json.optString("activePlayer", "PLAYER_1"))
+        val lastDiceRoll = if (json.has("lastDiceRoll")) json.getInt("lastDiceRoll") else null
+        val lastMovePlayer = if (json.has("lastMovePlayer")) PlayerId.valueOf(json.getString("lastMovePlayer")) else null
         val wasOvershot = json.optBoolean("wasOvershot", false)
         val extraTurnGranted = json.optBoolean("extraTurnGranted", false)
-        val activePlayer = try {
-            PlayerId.valueOf(json.optString("activePlayer", PlayerId.PLAYER_1.name))
-        } catch (e: Exception) { PlayerId.PLAYER_1 }
-        val statusType = json.optString("statusType", "InProgress")
-        val status = if (statusType == "MatchWon" && json.has("winner")) {
-            val winner = try { PlayerId.valueOf(json.getString("winner")) } catch (e: Exception) { PlayerId.PLAYER_1 }
-            GameStatus.MatchWon(winner)
+        val statusStr = json.optString("status", "InProgress")
+        val status = if (statusStr == "MatchWon") {
+            val winnerName = json.optString("matchWinner", "PLAYER_1")
+            GameStatus.MatchWon(PlayerId.valueOf(winnerName))
         } else {
             GameStatus.InProgress
         }
+
         SnakesAndLaddersState(
-            playerCount = playerCount,
-            playerPositions = positions.take(playerCount),
-            lastDiceRoll = lastRoll,
+            playerCount = pCount,
+            playerPositions = positions,
+            lastDiceRoll = lastDiceRoll,
             lastMovePlayer = lastMovePlayer,
-            ladderClimbed = ladder,
-            snakeSlid = snake,
             wasOvershot = wasOvershot,
             extraTurnGranted = extraTurnGranted,
             activePlayer = activePlayer,
@@ -123,3 +96,4 @@ fun deserializeSnakesState(jsonStr: String): SnakesAndLaddersState? {
         null
     }
 }
+

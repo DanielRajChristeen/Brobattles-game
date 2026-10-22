@@ -1,6 +1,10 @@
 package com.example.ui.screens.detail.snakesandladders
 
 import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +17,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,7 +27,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -42,8 +46,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -56,9 +64,6 @@ import com.example.core.engine.PlayerId
 import com.example.core.engine.snakesandladders.SnakesAndLaddersBoard
 import com.example.core.engine.snakesandladders.SnakesAndLaddersGameEngine
 import com.example.core.engine.snakesandladders.SnakesAndLaddersMove
-import com.example.core.engine.snakesandladders.deserializeSnakesState
-import com.example.core.engine.snakesandladders.serializeSnakesState
-import com.example.core.multiplayer.MultiplayerLobbyState
 import com.example.core.registry.GameMode
 import com.example.ui.MainViewModel
 import com.example.ui.components.ChunkyButton
@@ -70,14 +75,12 @@ import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.ToyboxBorder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 import kotlin.random.Random
 
 @Composable
 fun SnakesAndLaddersGameView(
     selectedMode: GameMode,
-    targetScore: Int = 1,
-    initialPlayerCount: Int = 2,
+    targetScore: Int = 1, // Single game mode
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
     onExit: () -> Unit
@@ -86,49 +89,16 @@ fun SnakesAndLaddersGameView(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
+    val engine = remember { SnakesAndLaddersGameEngine(initialTargetScore = 1) }
+    val bot = remember { SnakesAndLaddersBotOpponent() }
+    var gameState by remember { mutableStateOf(engine.state) }
+
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
-
-    val connectedPlayers = (lobbyState as? MultiplayerLobbyState.InGame)?.players
-        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.players ?: emptyList())
-    val isHost = (lobbyState as? MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
-
-    val localRoleString = (lobbyState as? MultiplayerLobbyState.InGame)?.localPlayer?.role
-        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.localPlayer?.role ?: "PLAYER_1")
-    val localPlayerId = try {
-        PlayerId.valueOf(localRoleString)
-    } catch (e: Exception) {
-        if (isHost) PlayerId.PLAYER_1 else PlayerId.PLAYER_2
-    }
-
-    var localPlayerCount by remember(initialPlayerCount) {
-        mutableIntStateOf(initialPlayerCount.coerceIn(2, 5))
-    }
-    var syncedPlayerCount by remember(connectedPlayers.size) {
-        mutableIntStateOf(if (isNearbyMode && connectedPlayers.isNotEmpty()) connectedPlayers.size.coerceIn(2, 5) else 2)
-    }
-
-    val activePlayerCount = when (selectedMode) {
-        GameMode.SOLO -> 2
-        GameMode.BLUETOOTH_1V1 -> syncedPlayerCount.coerceIn(2, 5)
-        else -> localPlayerCount
-    }
-
-    LaunchedEffect(connectedPlayers.size) {
-        if (isNearbyMode && connectedPlayers.isNotEmpty()) {
-            syncedPlayerCount = connectedPlayers.size.coerceIn(2, 5)
-        }
-    }
-
-    val engine = remember(activePlayerCount) {
-        SnakesAndLaddersGameEngine(initialTargetScore = 1, initialPlayerCount = activePlayerCount)
-    }
-    val bot = remember { SnakesAndLaddersBotOpponent() }
-    var gameState by remember(activePlayerCount) { mutableStateOf(engine.state) }
-
-    var showPlayerCountDialog by remember { mutableStateOf(false) }
+    val isHost = (lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.InGame)?.isHost
+        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: true)
+    val localPlayer = if (isHost) PlayerId.PLAYER_1 else PlayerId.PLAYER_2
 
     // Dice & Animation States
     var displayedDice by remember { mutableIntStateOf(1) }
@@ -142,19 +112,17 @@ fun SnakesAndLaddersGameView(
     // Board Dimensions in Px
     var boardPixelSize by remember { mutableFloatStateOf(0f) }
 
-    // Per-player board square and animation states
-    var playerSquares by remember(activePlayerCount) {
-        mutableStateOf(IntArray(activePlayerCount) { 1 })
-    }
-    var playerCoords by remember(activePlayerCount) {
-        mutableStateOf(Array(activePlayerCount) { Offset.Zero })
-    }
-    var playerPoses by remember(activePlayerCount) {
-        mutableStateOf(Array(activePlayerCount) { TokenPose.IDLE })
-    }
-    var playerLimbPhases by remember(activePlayerCount) {
-        mutableStateOf(FloatArray(activePlayerCount) { 0f })
-    }
+    // Visual Screen Coordinates for P1 & P2
+    var p1Coord by remember { mutableStateOf<Offset?>(null) }
+    var p2Coord by remember { mutableStateOf<Offset?>(null) }
+    var p1Square by remember { mutableIntStateOf(gameState.p1Position) }
+    var p2Square by remember { mutableIntStateOf(gameState.p2Position) }
+
+    // Stick-Figure Animation States
+    var p1Pose by remember { mutableStateOf(TokenPose.IDLE) }
+    var p2Pose by remember { mutableStateOf(TokenPose.IDLE) }
+    var p1LimbPhase by remember { mutableFloatStateOf(0f) }
+    var p2LimbPhase by remember { mutableFloatStateOf(0f) }
 
     // Snake Wiggle Animation
     var activeSnakeHead by remember { mutableStateOf<Int?>(null) }
@@ -166,30 +134,28 @@ fun SnakesAndLaddersGameView(
         }
     }
 
+    // Helper to calculate cell center
     fun getCellOffset(square: Int): Offset {
         val cellSize = if (boardPixelSize > 0f) boardPixelSize / 10f else 40f
         return SnakesAndLaddersBoard.getSquareCenter(square, cellSize)
     }
 
-    // Set initial coordinates for all players when board size is available
-    LaunchedEffect(boardPixelSize, activePlayerCount) {
+    // Initial position setup when board size is measured
+    LaunchedEffect(boardPixelSize) {
         if (boardPixelSize > 0f) {
-            val newCoords = Array(activePlayerCount) { i ->
-                getCellOffset(playerSquares.getOrElse(i) { 1 })
-            }
-            playerCoords = newCoords
+            p1Coord = getCellOffset(p1Square)
+            p2Coord = getCellOffset(p2Square)
         }
     }
 
-    // Movement routine for any player (P1 to P5) with geometric animations
+    // -------------------------------------------------------------
+    // MOVEMENT ROUTINE WITH GEOMETRIC LADDER CLIMB & SNAKE SLIDE
+    // -------------------------------------------------------------
     fun executeMovement(player: PlayerId, roll: Int) {
-        val playerIndex = player.ordinal
-        if (playerIndex >= activePlayerCount) return
-
         scope.launch {
             isMoving = true
             val cellSize = boardPixelSize / 10f
-            val startSquare = playerSquares.getOrElse(playerIndex) { 1 }
+            val startSquare = if (player == PlayerId.PLAYER_1) p1Square else p2Square
             val targetSquare = startSquare + roll
 
             // 1. Check Exact Roll Rule
@@ -201,10 +167,6 @@ fun SnakesAndLaddersGameView(
                 engine.makeMove(SnakesAndLaddersMove(roll), player)
                 gameState = engine.state
                 isMoving = false
-
-                if (isNearbyMode && isHost) {
-                    multiplayerManager.sendAction("SNAKES_SYNC", serializeSnakesState(engine.state, roll))
-                }
                 return@launch
             }
 
@@ -213,47 +175,38 @@ fun SnakesAndLaddersGameView(
                 val stepTarget = getCellOffset(step)
                 val prevTarget = getCellOffset(step - 1)
 
+                // Hop animation along step
                 val hopFrames = 6
                 for (f in 1..hopFrames) {
                     val progress = f.toFloat() / hopFrames
                     val currentX = prevTarget.x + (stepTarget.x - prevTarget.x) * progress
                     val currentY = prevTarget.y + (stepTarget.y - prevTarget.y) * progress
 
-                    val updatedCoords = playerCoords.clone()
-                    val updatedPoses = playerPoses.clone()
-                    val updatedPhases = playerLimbPhases.clone()
-
-                    updatedCoords[playerIndex] = Offset(currentX, currentY)
-                    updatedPoses[playerIndex] = TokenPose.HOPPING
-                    updatedPhases[playerIndex] = progress
-
-                    playerCoords = updatedCoords
-                    playerPoses = updatedPoses
-                    playerLimbPhases = updatedPhases
-
+                    if (player == PlayerId.PLAYER_1) {
+                        p1Coord = Offset(currentX, currentY)
+                        p1Pose = TokenPose.HOPPING
+                        p1LimbPhase = progress
+                    } else {
+                        p2Coord = Offset(currentX, currentY)
+                        p2Pose = TokenPose.HOPPING
+                        p2LimbPhase = progress
+                    }
                     delay(20)
                 }
 
-                val updatedSquares = playerSquares.clone()
-                updatedSquares[playerIndex] = step
-                playerSquares = updatedSquares
-
+                if (player == PlayerId.PLAYER_1) p1Square = step else p2Square = step
                 vibrate()
                 delay(40)
             }
 
-            val restingPoses = playerPoses.clone()
-            restingPoses[playerIndex] = TokenPose.IDLE
-            playerPoses = restingPoses
+            if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.IDLE else p2Pose = TokenPose.IDLE
             delay(180)
 
-            // 3. Check Ladder: Climb directly along geometric path
+            // 3. Check Ladder: Climb DIRECTLY along the ladder's geometric path!
             val ladder = SnakesAndLaddersBoard.LADDERS.find { it.bottom == targetSquare }
             if (ladder != null) {
                 actionBanner = "Climbing ladder! 🪜"
-                val climbingPoses = playerPoses.clone()
-                climbingPoses[playerIndex] = TokenPose.CLIMBING
-                playerPoses = climbingPoses
+                if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.CLIMBING else p2Pose = TokenPose.CLIMBING
                 vibrate()
 
                 val climbSteps = 24
@@ -261,94 +214,80 @@ fun SnakesAndLaddersGameView(
                     val t = s.toFloat() / climbSteps
                     val pt = SnakesAndLaddersBoard.getLadderPoint(ladder, t, cellSize)
 
-                    val updatedCoords = playerCoords.clone()
-                    val updatedPhases = playerLimbPhases.clone()
-                    updatedCoords[playerIndex] = pt
-                    updatedPhases[playerIndex] = t * 4f
-                    playerCoords = updatedCoords
-                    playerLimbPhases = updatedPhases
-
+                    if (player == PlayerId.PLAYER_1) {
+                        p1Coord = pt
+                        p1LimbPhase = t * 4f // Multiple limb cycles
+                    } else {
+                        p2Coord = pt
+                        p2LimbPhase = t * 4f
+                    }
                     delay(25)
                 }
 
-                val updatedSquares = playerSquares.clone()
-                val updatedCoords = playerCoords.clone()
-                val finalPoses = playerPoses.clone()
-
-                updatedSquares[playerIndex] = ladder.top
-                updatedCoords[playerIndex] = getCellOffset(ladder.top)
-                finalPoses[playerIndex] = TokenPose.IDLE
-
-                playerSquares = updatedSquares
-                playerCoords = updatedCoords
-                playerPoses = finalPoses
-
+                // Land on ladder top
+                if (player == PlayerId.PLAYER_1) {
+                    p1Square = ladder.top
+                    p1Coord = getCellOffset(ladder.top)
+                    p1Pose = TokenPose.IDLE
+                } else {
+                    p2Square = ladder.top
+                    p2Coord = getCellOffset(ladder.top)
+                    p2Pose = TokenPose.IDLE
+                }
                 vibrate()
                 delay(220)
                 actionBanner = null
             }
 
-            // 4. Check Snake: Slide along curved Bezier path
+            // 4. Check Snake: Slide DIRECTLY along the snake's actual curved body!
             val snake = SnakesAndLaddersBoard.SNAKES.find { it.head == targetSquare }
             if (snake != null) {
                 actionBanner = "Oops! Snake slide! 🐍"
                 activeSnakeHead = snake.head
-                val slidingPoses = playerPoses.clone()
-                slidingPoses[playerIndex] = TokenPose.SLIDING
-                playerPoses = slidingPoses
+                if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.SLIDING else p2Pose = TokenPose.SLIDING
                 vibrate()
 
                 val slideSteps = 26
                 for (s in 1..slideSteps) {
                     val t = s.toFloat() / slideSteps
-                    snakeWigglePhase = t * 14f
+                    snakeWigglePhase = t * 14f // Snake wiggles dynamically!
                     val pt = SnakesAndLaddersBoard.getSnakePoint(snake, t, cellSize, snakeWigglePhase)
 
-                    val updatedCoords = playerCoords.clone()
-                    val updatedPhases = playerLimbPhases.clone()
-                    updatedCoords[playerIndex] = pt
-                    updatedPhases[playerIndex] = t * 2f
-                    playerCoords = updatedCoords
-                    playerLimbPhases = updatedPhases
-
+                    if (player == PlayerId.PLAYER_1) {
+                        p1Coord = pt
+                        p1LimbPhase = t * 2f
+                    } else {
+                        p2Coord = pt
+                        p2LimbPhase = t * 2f
+                    }
                     delay(25)
                 }
 
+                // Land on snake tail
                 activeSnakeHead = null
                 snakeWigglePhase = 0f
-
-                val updatedSquares = playerSquares.clone()
-                val updatedCoords = playerCoords.clone()
-                val finalPoses = playerPoses.clone()
-
-                updatedSquares[playerIndex] = snake.tail
-                updatedCoords[playerIndex] = getCellOffset(snake.tail)
-                finalPoses[playerIndex] = TokenPose.IDLE
-
-                playerSquares = updatedSquares
-                playerCoords = updatedCoords
-                playerPoses = finalPoses
-
+                if (player == PlayerId.PLAYER_1) {
+                    p1Square = snake.tail
+                    p1Coord = getCellOffset(snake.tail)
+                    p1Pose = TokenPose.IDLE
+                } else {
+                    p2Square = snake.tail
+                    p2Coord = getCellOffset(snake.tail)
+                    p2Pose = TokenPose.IDLE
+                }
                 vibrate()
                 delay(220)
                 actionBanner = null
             }
 
-            // 5. Update Game Engine
+            // 5. Update Authoritative Game Engine State
             engine.makeMove(SnakesAndLaddersMove(roll), player)
             gameState = engine.state
             isMoving = false
 
-            if (isNearbyMode && isHost) {
-                multiplayerManager.sendAction("SNAKES_SYNC", serializeSnakesState(engine.state, roll))
-            }
-
             // 6. Check Win Condition
             if (gameState.status is GameStatus.MatchWon) {
-                val celebratingPoses = playerPoses.clone()
-                celebratingPoses[playerIndex] = TokenPose.CELEBRATING
-                playerPoses = celebratingPoses
-
+                if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.CELEBRATING else p2Pose = TokenPose.CELEBRATING
                 delay(1300)
                 showWinDialog = true
                 if (!matchRecorded) {
@@ -359,54 +298,31 @@ fun SnakesAndLaddersGameView(
                         mode = selectedMode.name,
                         player1Score = if (player == PlayerId.PLAYER_1) 1 else 0,
                         player2Score = if (player == PlayerId.PLAYER_2) 1 else 0,
-                        winner = player.displayName,
-                        durationSeconds = 60
+                        winner = player.name,
+                        durationSeconds = 40
                     )
                 }
             }
         }
     }
 
-    // Authoritative Dice Roll Execution
-    fun handleDiceRoll(player: PlayerId) {
-        if (player != gameState.activePlayer) return
+    // -------------------------------------------------------------
+    // REAL 3D-STYLE PHYSICAL DICE ROLLER
+    // -------------------------------------------------------------
+    fun rollDice(player: PlayerId, sendNetwork: Boolean = true) {
         if (isRolling || isMoving || gameState.status !is GameStatus.InProgress) return
-
-        if (isNearbyMode) {
-            if (isHost) {
-                // Host rolls authoritatively
-                val rollResult = Random.nextInt(1, 7)
-                scope.launch {
-                    displayedDice = rollResult
-                    isRolling = true
-                    vibrate()
-
-                    val rollJson = JSONObject().apply {
-                        put("player", player.name)
-                        put("roll", rollResult)
-                    }.toString()
-                    multiplayerManager.sendAction("SNAKES_ROLL_EXEC", rollJson)
-
-                    delay(860)
-                    isRolling = false
-                    vibrate()
-                    delay(150)
-                    executeMovement(player, rollResult)
-                }
-            } else {
-                // Client requests roll from authoritative host
-                multiplayerManager.sendAction("SNAKES_REQUEST_ROLL", localPlayerId.name)
-            }
-            return
-        }
-
-        // Local & Solo Modes
         scope.launch {
+            // Determine result BEFORE visual animation starts
             val rollResult = Random.nextInt(1, 7)
             displayedDice = rollResult
             isRolling = true
             vibrate()
 
+            if (sendNetwork && isNearbyMode) {
+                multiplayerManager.sendAction("SNAKES_ROLL", rollResult.toString())
+            }
+
+            // Wait for 3D cube to tumble, land, bounce, and transition to 2D result
             delay(860)
             isRolling = false
             vibrate()
@@ -416,111 +332,41 @@ fun SnakesAndLaddersGameView(
         }
     }
 
-    // Reset game handler
-    fun resetBoard() {
-        engine.resetGame(1)
-        gameState = engine.state
-        playerSquares = IntArray(activePlayerCount) { 1 }
-        val newCoords = Array(activePlayerCount) { getCellOffset(1) }
-        playerCoords = newCoords
-        playerPoses = Array(activePlayerCount) { TokenPose.IDLE }
-        playerLimbPhases = FloatArray(activePlayerCount) { 0f }
-        actionBanner = null
-        showWinDialog = false
-        matchRecorded = false
-        vibrate()
-    }
-
-    // Listen for incoming actions in Nearby Mode
-    LaunchedEffect(isNearbyMode, activePlayerCount) {
+    // Listen for incoming actions in Nearby Mode for Snakes and Ladders
+    LaunchedEffect(isNearbyMode) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
-                    "SNAKES_REQUEST_ROLL" -> {
-                        if (isHost) {
-                            val requestedPlayerName = action.payload
-                            val requestedPlayer = try { PlayerId.valueOf(requestedPlayerName) } catch (e: Exception) { null }
-                            if (requestedPlayer != null &&
-                                requestedPlayer == gameState.activePlayer &&
-                                !isRolling &&
-                                !isMoving &&
-                                gameState.status is GameStatus.InProgress
-                            ) {
-                                val rollResult = Random.nextInt(1, 7)
-                                scope.launch {
-                                    displayedDice = rollResult
-                                    isRolling = true
-                                    vibrate()
-
-                                    val rollJson = JSONObject().apply {
-                                        put("player", requestedPlayer.name)
-                                        put("roll", rollResult)
-                                    }.toString()
-                                    multiplayerManager.sendAction("SNAKES_ROLL_EXEC", rollJson)
-
-                                    delay(860)
-                                    isRolling = false
-                                    vibrate()
-                                    delay(150)
-                                    executeMovement(requestedPlayer, rollResult)
-                                }
-                            }
-                        }
-                    }
-                    "SNAKES_ROLL_EXEC" -> {
-                        if (!isHost) {
-                            try {
-                                val json = JSONObject(action.payload)
-                                val rollResult = json.getInt("roll")
-                                val playerName = json.getString("player")
-                                val movingPlayer = PlayerId.valueOf(playerName)
-
-                                scope.launch {
-                                    displayedDice = rollResult
-                                    isRolling = true
-                                    vibrate()
-                                    delay(860)
-                                    isRolling = false
-                                    vibrate()
-                                    delay(150)
-                                    executeMovement(movingPlayer, rollResult)
-                                }
-                            } catch (e: Exception) {
-                                // ignore parse error
-                            }
-                        }
-                    }
-                    "SNAKES_REQUEST_SYNC" -> {
-                        if (isHost) {
-                            multiplayerManager.sendAction("SNAKES_SYNC", serializeSnakesState(engine.state, displayedDice))
-                        }
-                    }
-                    "SNAKES_SYNC" -> {
-                        val synced = deserializeSnakesState(action.payload)
-                        if (synced != null) {
-                            if (synced.playerCount != syncedPlayerCount) {
-                                syncedPlayerCount = synced.playerCount
-                            }
-                            engine.syncState(synced)
-                            gameState = synced
-                            val updatedSquares = synced.playerPositions.toIntArray()
-                            playerSquares = updatedSquares
-                            playerCoords = Array(synced.playerCount) { i -> getCellOffset(updatedSquares.getOrElse(i) { 1 }) }
+                    "SNAKES_ROLL" -> {
+                        val rollResult = action.payload.toIntOrNull() ?: return@collect
+                        val remotePlayer = if (isHost) PlayerId.PLAYER_2 else PlayerId.PLAYER_1
+                        scope.launch {
+                            displayedDice = rollResult
+                            isRolling = true
+                            vibrate()
+                            delay(860)
+                            isRolling = false
+                            vibrate()
+                            delay(150)
+                            executeMovement(remotePlayer, rollResult)
                         }
                     }
                     "SNAKES_REMATCH" -> {
-                        resetBoard()
+                        engine.resetGame(1)
+                        gameState = engine.state
+                        p1Square = 1
+                        p2Square = 1
+                        p1Coord = getCellOffset(1)
+                        p2Coord = getCellOffset(1)
+                        p1Pose = TokenPose.IDLE
+                        p2Pose = TokenPose.IDLE
+                        actionBanner = null
+                        showWinDialog = false
+                        matchRecorded = false
+                        vibrate()
                     }
                 }
             }
-        }
-    }
-
-    // Client requests initial authoritative state when joining or reconnecting
-    LaunchedEffect(isNearbyMode, isHost) {
-        if (isNearbyMode && !isHost) {
-            delay(150)
-            multiplayerManager.sendAction("SNAKES_REQUEST_SYNC", localPlayerId.name)
         }
     }
 
@@ -533,7 +379,7 @@ fun SnakesAndLaddersGameView(
             !isMoving
         ) {
             delay(600)
-            handleDiceRoll(PlayerId.PLAYER_2)
+            rollDice(PlayerId.PLAYER_2)
         }
     }
 
@@ -567,17 +413,17 @@ fun SnakesAndLaddersGameView(
                 )
             }
 
-            // Current Turn Status Pill
-            val currentActivePlayer = gameState.activePlayer
+            // Current Turn Status
             val turnText = when {
-                gameState.status is GameStatus.MatchWon -> "${(gameState.status as GameStatus.MatchWon).matchWinner.displayName.uppercase()} WINS! 🏆"
+                gameState.status is GameStatus.MatchWon -> "WINNER! 🏆"
                 isRolling -> "ROLLING... 🎲"
                 isMoving -> "MOVING... 🚶"
-                selectedMode == GameMode.SOLO && currentActivePlayer == PlayerId.PLAYER_1 -> "YOUR TURN 🎲"
-                selectedMode == GameMode.SOLO && currentActivePlayer == PlayerId.PLAYER_2 -> "BOT'S TURN 🤖"
-                isNearbyMode && currentActivePlayer == localPlayerId -> "YOUR TURN 🎲"
-                isNearbyMode -> "${currentActivePlayer.displayName}'S TURN 🎲"
-                else -> "${SnakesTokens.getEmoji(currentActivePlayer)} ${currentActivePlayer.displayName}'S TURN"
+                selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_1 -> "YOUR TURN 🎲"
+                selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_2 -> "BOT'S TURN 🤖"
+                isNearbyMode && gameState.activePlayer == localPlayer -> "YOUR TURN 🎲"
+                isNearbyMode -> "OPPONENT'S TURN 🎲"
+                gameState.activePlayer == PlayerId.PLAYER_1 -> "PLAYER 1'S TURN 🎲"
+                else -> "PLAYER 2'S TURN 🎲"
             }
 
             PlayfulPill(
@@ -587,31 +433,6 @@ fun SnakesAndLaddersGameView(
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Local Mode: Player Count Quick Switcher (2 to 5 players)
-                if (selectedMode == GameMode.LOCAL_1V1) {
-                    Box(
-                        modifier = Modifier
-                            .height(46.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.5.dp, ToyboxBorder, RoundedCornerShape(14.dp))
-                            .bouncyClickable { showPlayerCountDialog = true }
-                            .padding(horizontal = 10.dp)
-                            .testTag("snakes_local_player_count_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("👥", fontSize = 14.sp)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "$activePlayerCount P",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-
                 // Help (?)
                 Box(
                     modifier = Modifier
@@ -634,10 +455,18 @@ fun SnakesAndLaddersGameView(
                         .background(MaterialTheme.colorScheme.surface)
                         .border(1.5.dp, ToyboxBorder, CircleShape)
                         .bouncyClickable {
-                            resetBoard()
-                            if (isNearbyMode) {
-                                multiplayerManager.sendAction("SNAKES_REMATCH", "")
-                            }
+                            engine.resetGame(1)
+                            gameState = engine.state
+                            p1Square = 1
+                            p2Square = 1
+                            p1Coord = getCellOffset(1)
+                            p2Coord = getCellOffset(1)
+                            p1Pose = TokenPose.IDLE
+                            p2Pose = TokenPose.IDLE
+                            actionBanner = null
+                            showWinDialog = false
+                            matchRecorded = false
+                            vibrate()
                         }
                         .testTag("snakes_restart_button"),
                     contentAlignment = Alignment.Center
@@ -653,102 +482,78 @@ fun SnakesAndLaddersGameView(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // --- 2. MULTI-PLAYER POSITION & STATUS HUD (Supports 2 to 5 Players) ---
+        // --- 2. LIGHTWEIGHT PLAYER POSITION HUD (NO ROUND ACCUMULATION) ---
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .border(1.5.dp, ToyboxBorder, RoundedCornerShape(20.dp))
-                .padding(vertical = 10.dp, horizontal = 12.dp)
+                .padding(vertical = 10.dp, horizontal = 16.dp)
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                if (actionBanner != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        PlayfulPill(
-                            text = actionBanner ?: "",
-                            backgroundColor = PlayfulGreen.copy(alpha = 0.15f),
-                            textColor = PlayfulGreen
-                        )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Player 1
+                Column(horizontalAlignment = Alignment.Start) {
+                    val p1Label = when {
+                        selectedMode == GameMode.SOLO -> "YOU 🟠"
+                        isNearbyMode -> if (localPlayer == PlayerId.PLAYER_1) "YOU 🟠" else "OPPONENT 🟠"
+                        else -> "PLAYER 1 🟠"
                     }
+                    Text(
+                        text = p1Label,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
+                        color = PlayfulOrange
+                    )
+                    Text(
+                        text = "Square $p1Square",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
 
-                // Player Badges Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    for (i in 0 until activePlayerCount) {
-                        val playerEnum = PlayerId.entries[i]
-                        val isTurn = gameState.activePlayer == playerEnum && gameState.status is GameStatus.InProgress
-                        val square = playerSquares.getOrElse(i) { 1 }
-                        val tokenColor = SnakesTokens.getColor(i)
-                        val tokenEmoji = SnakesTokens.getEmoji(i)
+                // Action Banner
+                if (actionBanner != null) {
+                    PlayfulPill(
+                        text = actionBanner ?: "",
+                        backgroundColor = PlayfulGreen.copy(alpha = 0.15f),
+                        textColor = PlayfulGreen
+                    )
+                } else {
+                    PlayfulPill(
+                        text = "FIRST TO 100",
+                        backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                        textColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
-                        val playerLabel = when {
-                            selectedMode == GameMode.SOLO -> if (i == 0) "YOU" else "BOT"
-                            isNearbyMode -> {
-                                val netPlayer = connectedPlayers.getOrNull(i)
-                                if (playerEnum == localPlayerId) "YOU" else netPlayer?.name?.take(7) ?: "P${i + 1}"
-                            }
-                            else -> if (activePlayerCount <= 3) "Player ${i + 1}" else "P${i + 1}"
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (isTurn) tokenColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                                .border(
-                                    width = if (isTurn) 2.dp else 1.dp,
-                                    color = if (isTurn) tokenColor else ToyboxBorder.copy(alpha = 0.6f),
-                                    shape = RoundedCornerShape(12.dp)
-                                )
-                                .padding(vertical = 6.dp, horizontal = 4.dp)
-                                .testTag("player_status_badge_$i"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(text = tokenEmoji, fontSize = 13.sp)
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = playerLabel,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
-                                        fontSize = 10.sp,
-                                        color = if (isTurn) tokenColor else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "Sq. $square",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                if (isTurn) {
-                                    Text(
-                                        text = "TURN 🎲",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
-                                        fontSize = 8.sp,
-                                        color = tokenColor
-                                    )
-                                }
-                            }
-                        }
+                // Player 2
+                Column(horizontalAlignment = Alignment.End) {
+                    val p2Label = when {
+                        selectedMode == GameMode.SOLO -> "BOT 🟣"
+                        isNearbyMode -> if (localPlayer == PlayerId.PLAYER_2) "YOU 🟣" else "OPPONENT 🟣"
+                        else -> "PLAYER 2 🟣"
                     }
+                    Text(
+                        text = p2Label,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
+                        color = PlayfulPurple
+                    )
+                    Text(
+                        text = "Square $p2Square",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // --- 3. RICH BOARD GAME VIEW WITH COLLISION-SAFE TOKEN ARRANGEMENT ---
+        // --- 3. RICH BOARD GAME VIEW ---
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
@@ -759,38 +564,24 @@ fun SnakesAndLaddersGameView(
         ) {
             val boardPx = constraints.maxWidth.toFloat()
             boardPixelSize = boardPx
+
             val cellSize = boardPx / 10f
 
-            // Group idle tokens sharing the same square and apply offsets
-            val idlePlayersBySquare = (0 until activePlayerCount)
-                .filter { playerPoses[it] == TokenPose.IDLE }
-                .groupBy { playerSquares.getOrElse(it) { 1 } }
+            // Offset tokens slightly if occupying the exact same square
+            val isSame = p1Square == p2Square && p1Pose == TokenPose.IDLE && p2Pose == TokenPose.IDLE
+            val p1Pos = p1Coord ?: getCellOffset(p1Square)
+            val p2Pos = p2Coord ?: getCellOffset(p2Square)
 
-            val visualTokens = (0 until activePlayerCount).map { i ->
-                val square = playerSquares.getOrElse(i) { 1 }
-                val pose = playerPoses[i]
-                val limbPhase = playerLimbPhases[i]
-
-                val pos = if (pose == TokenPose.IDLE) {
-                    val group = idlePlayersBySquare[square] ?: listOf(i)
-                    val idxInGroup = group.indexOf(i)
-                    val offset = getPlayerOffsetOnSquare(idxInGroup, group.size, cellSize)
-                    (playerCoords.getOrNull(i) ?: getCellOffset(square)) + offset
-                } else {
-                    playerCoords.getOrNull(i) ?: getCellOffset(square)
-                }
-
-                PlayerTokenVisual(
-                    playerIndex = i,
-                    position = pos,
-                    pose = pose,
-                    limbPhase = limbPhase,
-                    color = SnakesTokens.getColor(i)
-                )
-            }
+            val p1FinalPos = if (isSame) Offset(p1Pos.x - cellSize * 0.22f, p1Pos.y) else p1Pos
+            val p2FinalPos = if (isSame) Offset(p2Pos.x + cellSize * 0.22f, p2Pos.y) else p2Pos
 
             SnakesAndLaddersBoardView(
-                playerTokens = visualTokens,
+                p1VisualPos = p1FinalPos,
+                p2VisualPos = p2FinalPos,
+                p1Pose = p1Pose,
+                p2Pose = p2Pose,
+                p1LimbPhase = p1LimbPhase,
+                p2LimbPhase = p2LimbPhase,
                 activeSnakeHead = activeSnakeHead,
                 snakeWigglePhase = snakeWigglePhase,
                 modifier = Modifier.fillMaxSize()
@@ -799,12 +590,12 @@ fun SnakesAndLaddersGameView(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // --- 4. 3D-STYLE PHYSICAL DICE CONTROL ---
+        // --- 4. REAL 3D-STYLE PHYSICAL DICE CONTROL ---
         val canRoll = !isRolling && !isMoving &&
                 gameState.status is GameStatus.InProgress &&
                 (when {
                     selectedMode == GameMode.SOLO -> gameState.activePlayer == PlayerId.PLAYER_1
-                    isNearbyMode -> gameState.activePlayer == localPlayerId
+                    isNearbyMode -> gameState.activePlayer == localPlayer
                     else -> true
                 })
 
@@ -816,28 +607,20 @@ fun SnakesAndLaddersGameView(
                 targetFace = displayedDice,
                 isRolling = isRolling,
                 canRoll = canRoll,
-                onClick = { handleDiceRoll(gameState.activePlayer) },
-                modifier = Modifier.testTag("snakes_dice_button")
+                onClick = { rollDice(gameState.activePlayer) }
             )
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            val currentActive = gameState.activePlayer
-            val promptText = when {
-                isRolling -> "ROLLING... 🎲"
-                isMoving -> "MOVING... 🚶"
-                canRoll -> {
-                    if (isNearbyMode) "TAP DICE TO ROLL! 🎲"
-                    else if (selectedMode == GameMode.SOLO) "TAP DICE TO ROLL! 🎲"
-                    else "TAP DICE TO ROLL (${currentActive.displayName}) 🎲"
-                }
-                selectedMode == GameMode.SOLO && currentActive == PlayerId.PLAYER_2 -> "Bot is rolling... 🤖"
-                isNearbyMode -> "Waiting for ${currentActive.displayName} to roll... 🎲"
-                else -> "WAITING..."
-            }
-
             Text(
-                text = promptText,
+                text = when {
+                    isRolling -> "ROLLING... 🎲"
+                    isMoving -> "MOVING... 🚶"
+                    canRoll -> "TAP DICE TO ROLL! 🎲"
+                    selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_2 -> "Bot is rolling... 🤖"
+                    isNearbyMode && gameState.activePlayer != localPlayer -> "Opponent's turn to roll... 🎲"
+                    else -> "WAITING..."
+                },
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Black,
                     letterSpacing = 0.5.sp
@@ -863,11 +646,10 @@ fun SnakesAndLaddersGameView(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("• Supports 2 to 5 players locally and over Nearby Wi-Fi!", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                    Text("• Roll tokens in exact order: 🔴 P1, 🟣 P2, 🔵 P3, 🟤 P4, 🟢 P5.", style = MaterialTheme.typography.bodyMedium)
-                    Text("• 🪜 Climb ladders straight to the top!", style = MaterialTheme.typography.bodyMedium, color = PlayfulGreen)
+                    Text("• Roll the dice to move your stick figure forward.", style = MaterialTheme.typography.bodyMedium)
+                    Text("• 🪜 Climb ladders directly to the top!", style = MaterialTheme.typography.bodyMedium, color = PlayfulGreen)
                     Text("• 🐍 Slide down snakes all the way to the tail!", style = MaterialTheme.typography.bodyMedium, color = PlayfulOrange)
-                    Text("• First player to reach square 100 wins! (Exact roll required).", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                    Text("• First to 100 wins! (Exact roll required).", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 }
             },
             confirmButton = {
@@ -881,27 +663,21 @@ fun SnakesAndLaddersGameView(
         )
     }
 
-    // Victory Dialog
+    // Victory Dialog (Single Game - No Next Round!)
     if (showWinDialog) {
         val winner = (gameState.status as? GameStatus.MatchWon)?.matchWinner ?: PlayerId.PLAYER_1
-        val winnerIndex = winner.ordinal
-        val winnerEmoji = SnakesTokens.getEmoji(winnerIndex)
-        val isLocalWinner = when {
-            selectedMode == GameMode.SOLO -> winner == PlayerId.PLAYER_1
-            isNearbyMode -> winner == localPlayerId
-            else -> false
-        }
+        val isP1Winner = winner == PlayerId.PLAYER_1
 
         AlertDialog(
             onDismissRequest = { /* require user action */ },
             shape = RoundedCornerShape(26.dp),
             containerColor = MaterialTheme.colorScheme.surface,
-            icon = { Text(if (isLocalWinner) "🏆" else "👑", fontSize = 48.sp) },
+            icon = { Text(if (isP1Winner) "🏆" else "😵", fontSize = 48.sp) },
             title = {
                 val winTitle = when {
-                    selectedMode == GameMode.SOLO -> if (winner == PlayerId.PLAYER_1) "YOU WIN! 🎉" else "BOT WON! 🤖"
-                    isNearbyMode -> if (winner == localPlayerId) "YOU WIN! 🎉" else "${winner.displayName} WINS! 👑"
-                    else -> "$winnerEmoji ${winner.displayName} WINS! 👑"
+                    selectedMode == GameMode.SOLO -> if (isP1Winner) "YOU WIN! 🎉" else "BOT WON! 🤖"
+                    isNearbyMode -> if (winner == localPlayer) "YOU WIN! 🎉" else "OPPONENT WINS! 👑"
+                    else -> if (isP1Winner) "PLAYER 1 WINS! 👑" else "PLAYER 2 WINS! 👑"
                 }
                 Text(
                     text = winTitle,
@@ -916,13 +692,13 @@ fun SnakesAndLaddersGameView(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Reached square 100! 🏁",
+                        text = "Made it to 100! 🏁",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
                         color = PlayfulGreen
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Winner: $winnerEmoji ${winner.displayName}",
+                        text = "Pure classic board game fun!",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -932,7 +708,18 @@ fun SnakesAndLaddersGameView(
                 ChunkyButton(
                     text = "PLAY AGAIN 🔄",
                     onClick = {
-                        resetBoard()
+                        engine.resetGame(1)
+                        gameState = engine.state
+                        p1Square = 1
+                        p2Square = 1
+                        p1Coord = getCellOffset(1)
+                        p2Coord = getCellOffset(1)
+                        p1Pose = TokenPose.IDLE
+                        p2Pose = TokenPose.IDLE
+                        actionBanner = null
+                        showWinDialog = false
+                        matchRecorded = false
+                        vibrate()
                         if (isNearbyMode) {
                             multiplayerManager.sendAction("SNAKES_REMATCH", "")
                         }
@@ -954,130 +741,6 @@ fun SnakesAndLaddersGameView(
                     TextButton(onClick = onExit) {
                         Text("Home 🏠", fontWeight = FontWeight.Bold)
                     }
-                }
-            }
-        )
-    }
-
-    // Local Mode: Number of Players Selection Dialog
-    if (showPlayerCountDialog) {
-        AlertDialog(
-            onDismissRequest = { showPlayerCountDialog = false },
-            shape = RoundedCornerShape(26.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            icon = { Text("👥", fontSize = 42.sp) },
-            title = {
-                Text(
-                    text = "NUMBER OF PLAYERS",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    (2..5).forEach { count ->
-                        val isSelected = activePlayerCount == count
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(if (isSelected) PlayfulGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                                .border(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) PlayfulGreen else ToyboxBorder,
-                                    shape = RoundedCornerShape(16.dp)
-                                )
-                                .bouncyClickable {
-                                    localPlayerCount = count
-                                    showPlayerCountDialog = false
-                                    resetBoard()
-                                }
-                                .padding(horizontal = 14.dp, vertical = 12.dp)
-                                .testTag("snakes_player_count_dialog_option_$count")
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = (0 until count).joinToString(" ") { SnakesTokens.getEmoji(it) },
-                                        fontSize = 16.sp
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = "$count Players",
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = if (isSelected) PlayfulGreen else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Selected",
-                                        tint = PlayfulGreen,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showPlayerCountDialog = false }) {
-                    Text("Close", fontWeight = FontWeight.Bold)
-                }
-            }
-        )
-    }
-
-    // Nearby Mode: Host / Connection Lost Alert
-    if (isNearbyMode && lobbyState is MultiplayerLobbyState.Disconnected) {
-        val reason = (lobbyState as MultiplayerLobbyState.Disconnected).reason
-        AlertDialog(
-            onDismissRequest = { /* user must choose an action */ },
-            shape = RoundedCornerShape(26.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            icon = { Text("🔌", fontSize = 42.sp) },
-            title = {
-                Text(
-                    text = "Connection Lost",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = reason.ifBlank { "Lost connection to the host. The game session has ended." },
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                ChunkyButton(
-                    text = "Back to Modes 🎮",
-                    onClick = {
-                        multiplayerManager.disconnect()
-                        onChangeMode()
-                    },
-                    backgroundColor = PlayfulPurple,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        multiplayerManager.disconnect()
-                        onExit()
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Exit to Home 🏠", fontWeight = FontWeight.Bold)
                 }
             }
         )
