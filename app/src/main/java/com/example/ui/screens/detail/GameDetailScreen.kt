@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.audio.XOSoundAndHapticManager
 import com.example.core.bot.BotDifficulty
 import com.example.core.bot.XOBotOpponent
 import com.example.core.engine.GameStatus
@@ -131,8 +132,24 @@ fun GameDetailScreen(
         ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
     val localPlayerId = if (isHost) PlayerId.PLAYER_1 else PlayerId.PLAYER_2
 
+    val isXoGame = game.id.equals("xo", ignoreCase = true)
+    val xoSoundManager = remember(context) { XOSoundAndHapticManager(context) }
+    DisposableEffect(xoSoundManager) {
+        onDispose {
+            xoSoundManager.release()
+        }
+    }
+
+    // Immediately stop playing sounds if user switches Sound Effects OFF in Settings
+    LaunchedEffect(settings.soundEnabled) {
+        if (!settings.soundEnabled) {
+            xoSoundManager.stopAllSounds()
+        }
+    }
+
     BackHandler(enabled = true) {
         if (isPlaying) {
+            xoSoundManager.stopAll()
             isPlaying = false
             multiplayerManager.disconnect()
         } else {
@@ -146,6 +163,81 @@ fun GameDetailScreen(
     var gameState by remember { mutableStateOf(engine.state) }
     var isBotThinking by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
+
+    var lastObservedBoard by remember { mutableStateOf<List<PlayerId?>?>(null) }
+    var lastProcessedOutcomeKey by remember { mutableStateOf<String?>(null) }
+
+    // Piece Placement Beep: Triggered once per rendered valid piece placement (local, bot, or remote)
+    LaunchedEffect(gameState.board, isPlaying, isXoGame) {
+        if (isPlaying && isXoGame) {
+            val currentBoard = gameState.board
+            val prevBoard = lastObservedBoard
+            if (prevBoard != null && currentBoard != prevBoard && currentBoard.any { it != null }) {
+                xoSoundManager.playPlacementBeep(settings.soundEnabled)
+            }
+            lastObservedBoard = currentBoard
+        } else {
+            lastObservedBoard = null
+        }
+    }
+
+    // Round and Match Outcome Sound & Vibration
+    LaunchedEffect(gameState.status, gameState.roundNumber, isPlaying, isXoGame) {
+        if (!isPlaying || !isXoGame) {
+            lastProcessedOutcomeKey = null
+            return@LaunchedEffect
+        }
+
+        val localPlayer = if (selectedMode == GameMode.BLUETOOTH_1V1) {
+            localPlayerId ?: PlayerId.PLAYER_1
+        } else {
+            PlayerId.PLAYER_1
+        }
+
+        when (val currentStatus = gameState.status) {
+            is GameStatus.InProgress -> {
+                // Round is actively playing; reset key so next terminal outcome triggers
+                lastProcessedOutcomeKey = null
+            }
+            is GameStatus.RoundWon -> {
+                val outcomeKey = "ROUND_WON_${gameState.roundNumber}_${currentStatus.winner.name}"
+                if (lastProcessedOutcomeKey != outcomeKey) {
+                    lastProcessedOutcomeKey = outcomeKey
+                    val didLocalWin = currentStatus.winner == localPlayer
+                    if (didLocalWin) {
+                        xoSoundManager.playRoundWon(settings.soundEnabled)
+                    } else {
+                        xoSoundManager.playRoundLost(settings.soundEnabled)
+                    }
+                }
+            }
+            is GameStatus.RoundDraw -> {
+                val outcomeKey = "ROUND_DRAW_${gameState.roundNumber}"
+                if (lastProcessedOutcomeKey != outcomeKey) {
+                    lastProcessedOutcomeKey = outcomeKey
+                    // Draw: do not classify as win or loss; no victory or failure effects
+                }
+            }
+            is GameStatus.MatchWon -> {
+                val isTie = gameState.player1Score == gameState.player2Score
+                val outcomeKey = "MATCH_WON_${gameState.roundNumber}_${currentStatus.matchWinner.name}_${gameState.player1Score}_${gameState.player2Score}"
+                if (lastProcessedOutcomeKey != outcomeKey) {
+                    lastProcessedOutcomeKey = outcomeKey
+                    if (!isTie) {
+                        val didLocalWin = currentStatus.matchWinner == localPlayer
+                        if (didLocalWin) {
+                            xoSoundManager.playMatchWon(settings.soundEnabled, settings.vibrationEnabled)
+                        } else {
+                            xoSoundManager.playMatchLost(settings.soundEnabled, settings.vibrationEnabled)
+                        }
+                    }
+                }
+            }
+            else -> {
+                // Safe handling for any unhandled state (e.g. NotStarted)
+            }
+        }
+    }
 
     fun vibrate() {
         if (settings.vibrationEnabled) {
@@ -524,10 +616,12 @@ fun GameDetailScreen(
                             }
                         },
                         onChangeMode = {
+                            xoSoundManager.stopAll()
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            xoSoundManager.stopAll()
                             multiplayerManager.disconnect()
                             onBack()
                         }

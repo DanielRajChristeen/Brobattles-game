@@ -330,14 +330,14 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Pops & Clicks",
+                                text = "Sound Effects",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Fun audio chimes on game moves",
+                                text = "Placement beeps and win/loss instrumentals",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -374,14 +374,14 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Phone Buzz",
+                                text = "Vibration",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Tactile feedback when tapping",
+                                text = "Haptic feedback for match outcomes and moves",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
