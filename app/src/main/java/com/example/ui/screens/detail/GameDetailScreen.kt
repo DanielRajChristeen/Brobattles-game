@@ -66,7 +66,6 @@ import com.example.core.bot.XOBotOpponent
 import com.example.core.engine.GameStatus
 import com.example.core.engine.MoveResult
 import com.example.core.engine.PlayerId
-import com.example.core.engine.archery.ArcheryDifficulty
 import com.example.core.engine.chess.ChessDifficulty
 import com.example.core.engine.chess.ChessPlayerColor
 import com.example.core.engine.dotconnections.DotBoardSize
@@ -83,7 +82,6 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.ChunkyButton
 import com.example.ui.components.PlayfulPill
 import com.example.ui.components.bouncyClickable
-import com.example.ui.screens.detail.archery.ArcheryGameView
 import com.example.ui.screens.detail.chess.ChessGameView
 import com.example.ui.screens.detail.dotconnections.DotConnectionsGameView
 import com.example.ui.screens.detail.snakesandladders.SnakesAndLaddersGameView
@@ -116,7 +114,6 @@ fun GameDetailScreen(
     var selectedMode by remember { mutableStateOf(GameMode.SOLO) }
     var chessDifficulty by remember { mutableStateOf(ChessDifficulty.MEDIUM) }
     var chessPlayerColor by remember { mutableStateOf(ChessPlayerColor.AUTO) }
-    var archeryDifficulty by rememberSaveable { mutableStateOf(ArcheryDifficulty.MEDIUM) }
     var dotDifficulty by rememberSaveable { mutableStateOf(DotDifficulty.MEDIUM) }
     var dotBoardSize by rememberSaveable { mutableStateOf(DotBoardSize.MEDIUM) }
     var xoDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
@@ -459,8 +456,6 @@ fun GameDetailScreen(
                 onChessDifficultySelected = { chessDifficulty = it },
                 chessPlayerColor = chessPlayerColor,
                 onChessPlayerColorSelected = { chessPlayerColor = it },
-                archeryDifficulty = archeryDifficulty,
-                onArcheryDifficultySelected = { archeryDifficulty = it },
                 dotDifficulty = dotDifficulty,
                 onDotDifficultySelected = { dotDifficulty = it },
                 dotBoardSize = dotBoardSize,
@@ -531,22 +526,6 @@ fun GameDetailScreen(
                     SnakesAndLaddersGameView(
                         selectedMode = selectedMode,
                         targetScore = targetScore,
-                        viewModel = viewModel,
-                        onChangeMode = {
-                            isPlaying = false
-                            multiplayerManager.disconnect()
-                        },
-                        onExit = {
-                            multiplayerManager.disconnect()
-                            onBack()
-                        }
-                    )
-                }
-                game.id.equals("archery", ignoreCase = true) -> {
-                    ArcheryGameView(
-                        selectedMode = selectedMode,
-                        targetScore = targetScore,
-                        difficulty = archeryDifficulty,
                         viewModel = viewModel,
                         onChangeMode = {
                             isPlaying = false
@@ -677,8 +656,6 @@ private fun CleanLaunchView(
     onChessDifficultySelected: (ChessDifficulty) -> Unit = {},
     chessPlayerColor: ChessPlayerColor = ChessPlayerColor.AUTO,
     onChessPlayerColorSelected: (ChessPlayerColor) -> Unit = {},
-    archeryDifficulty: ArcheryDifficulty = ArcheryDifficulty.MEDIUM,
-    onArcheryDifficultySelected: (ArcheryDifficulty) -> Unit = {},
     dotDifficulty: DotDifficulty = DotDifficulty.MEDIUM,
     onDotDifficultySelected: (DotDifficulty) -> Unit = {},
     dotBoardSize: DotBoardSize = DotBoardSize.MEDIUM,
@@ -908,55 +885,6 @@ private fun CleanLaunchView(
             }
         }
 
-        // ARCHERY ALONE: BOT DIFFICULTY ONLY when VS BOT is selected
-        if (game.id.equals("archery", ignoreCase = true) && selectedMode == GameMode.SOLO) {
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = "BOT DIFFICULTY",
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 1.sp
-                ),
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                listOf(ArcheryDifficulty.EASY, ArcheryDifficulty.MEDIUM, ArcheryDifficulty.HARD).forEach { diff ->
-                    val isSelected = archeryDifficulty == diff
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(50.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(
-                                if (isSelected) accentColor else MaterialTheme.colorScheme.surface
-                            )
-                            .border(
-                                width = if (isSelected) 2.5.dp else 1.5.dp,
-                                color = if (isSelected) accentColor else colors.border,
-                                shape = RoundedCornerShape(16.dp)
-                            )
-                            .bouncyClickable { onArcheryDifficultySelected(diff) }
-                            .testTag("archery_difficulty_${diff.name.lowercase()}"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = diff.title,
-                            style = MaterialTheme.typography.titleSmall.copy(
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 0.5.sp
-                            ),
-                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-        }
-
         // DOT CONNECTIONS: BOARD SIZE & BOT DIFFICULTY
         if (game.id.equals("dot_connections", ignoreCase = true)) {
             Spacer(modifier = Modifier.height(14.dp))
@@ -1113,7 +1041,7 @@ private fun CleanLaunchView(
             Spacer(modifier = Modifier.height(20.dp))
 
             // Target Score Chips
-            val targetScoreHeader = if (game.id.equals("xo", ignoreCase = true)) "MATCH TARGET" else if (game.id.equals("archery", ignoreCase = true)) "MATCH FORMAT" else "FIRST TO..."
+            val targetScoreHeader = if (game.id.equals("xo", ignoreCase = true)) "MATCH TARGET" else "FIRST TO..."
             Text(
                 text = targetScoreHeader,
                 style = MaterialTheme.typography.labelLarge.copy(
@@ -1130,7 +1058,7 @@ private fun CleanLaunchView(
             ) {
                 game.targetScoreOptions.forEach { score ->
                     val isSelected = targetScore == score
-                    val chipText = if (game.id.equals("xo", ignoreCase = true)) "$score ROUNDS" else if (game.id.equals("archery", ignoreCase = true)) "BEST OF $score" else "$score WINS"
+                    val chipText = if (game.id.equals("xo", ignoreCase = true)) "$score ROUNDS" else "$score WINS"
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -1165,7 +1093,6 @@ private fun CleanLaunchView(
         // Chunky Instant Play Button
         val playButtonText = when {
             game.id.equals("chess", ignoreCase = true) -> "PLAY ♟️"
-            game.id.equals("archery", ignoreCase = true) -> "PLAY 🏹"
             else -> "PLAY 🎮"
         }
         ChunkyButton(

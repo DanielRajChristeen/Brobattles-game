@@ -12,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -59,11 +60,14 @@ class ExampleRobolectricTest {
     assertEquals("Chess", chess.title)
     assertEquals("♟️", chess.emoji)
 
+    val dotConnections = GameRegistry.getGameById("dot_connections")
+    assertNotNull(dotConnections)
+    assertTrue(dotConnections!!.isAvailable)
+    assertEquals("Dot Connections", dotConnections.title)
+    assertEquals("🔲", dotConnections.emoji)
+
     val archery = GameRegistry.getGameById("archery")
-    assertNotNull(archery)
-    assertTrue(archery!!.isAvailable)
-    assertEquals("Archery", archery.title)
-    assertEquals("🏹", archery.emoji)
+    assertNull(archery)
   }
 
   @Test

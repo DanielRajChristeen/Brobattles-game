@@ -62,21 +62,6 @@ object GameRegistry {
         secondaryAccentHex = 0xFF78350F // Coffee Wood
     )
 
-    val ARCHERY = GameDefinition(
-        id = "archery",
-        title = "Archery",
-        subtitle = "Draw. Aim. Release!",
-        description = "Stick-figure archery duel! Hit different body zones, land headshots, and out-duel your rival.",
-        emoji = "🏹",
-        statusTag = "LET'S GO! 🚀",
-        isAvailable = true,
-        supportedModes = listOf(GameMode.SOLO, GameMode.LOCAL_1V1, GameMode.BLUETOOTH_1V1),
-        targetScoreOptions = listOf(3, 5, 10),
-        defaultTargetScore = 5,
-        accentHex = 0xFF0D9488, // Archer Jade Teal
-        secondaryAccentHex = 0xFFF59E0B // Golden Bow Amber
-    )
-
     val DOT_CONNECTIONS = GameDefinition(
         id = "dot_connections",
         title = "Dot Connections",
@@ -97,7 +82,6 @@ object GameRegistry {
         TUG_OF_WAR,
         SNAKES_AND_LADDERS,
         CHESS,
-        ARCHERY,
         DOT_CONNECTIONS
     )
 
