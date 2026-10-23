@@ -85,6 +85,8 @@ fun ChunkyButton(
     backgroundColor: Color = MaterialTheme.colorScheme.primary,
     contentColor: Color = Color.White,
     depthColor: Color = backgroundColor.copy(alpha = 0.8f),
+    disabledBackgroundColor: Color = Color(0xFFD6D6D6),
+    disabledContentColor: Color = Color(0xFF6B6B6B),
     leadingEmoji: String? = null,
     buttonHeight: Dp = 58.dp,
     fontSize: TextUnit = 16.sp,
@@ -115,7 +117,7 @@ fun ChunkyButton(
                 .height(buttonHeight)
                 .offset(y = 4.dp)
                 .clip(RoundedCornerShape(cornerRadius))
-                .background(if (enabled) depthColor else Color.Gray.copy(alpha = 0.4f))
+                .background(if (enabled) depthColor else Color.Gray.copy(alpha = 0.3f))
         )
 
         // Top button face
@@ -125,7 +127,7 @@ fun ChunkyButton(
                 .height(buttonHeight)
                 .offset { IntOffset(0, offsetY.dp.roundToPx()) }
                 .clip(RoundedCornerShape(cornerRadius))
-                .background(if (enabled) backgroundColor else Color.LightGray)
+                .background(if (enabled) backgroundColor else disabledBackgroundColor)
                 .border(
                     width = 2.dp,
                     color = Color.White.copy(alpha = 0.35f),
@@ -151,7 +153,7 @@ fun ChunkyButton(
                         fontSize = fontSize,
                         letterSpacing = 0.8.sp
                     ),
-                    color = contentColor
+                    color = if (enabled) contentColor else disabledContentColor
                 )
             }
         }

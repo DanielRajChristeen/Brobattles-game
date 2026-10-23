@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -75,6 +76,7 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val settings by viewModel.settings.collectAsState()
     var showResetDialog by remember { mutableStateOf(false) }
 
@@ -187,6 +189,8 @@ fun SettingsScreen(
                 var usernameInput by remember(settings.username) { mutableStateOf(settings.username) }
                 val trimmedInput = usernameInput.trim()
                 val isChanged = trimmedInput != settings.username && trimmedInput.isNotEmpty()
+                val isBlank = usernameInput.isBlank()
+                val remainingChars = (16 - usernameInput.length).coerceAtLeast(0)
                 var showSavedBadge by remember { mutableStateOf(false) }
 
                 LaunchedEffect(showSavedBadge) {
@@ -210,6 +214,7 @@ fun SettingsScreen(
                         Text("Enter your username")
                     },
                     singleLine = true,
+                    isError = isBlank,
                     shape = RoundedCornerShape(16.dp),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Words,
@@ -219,7 +224,9 @@ fun SettingsScreen(
                         onDone = {
                             if (trimmedInput.isNotEmpty()) {
                                 viewModel.setUsername(trimmedInput)
+                                usernameInput = trimmedInput
                                 showSavedBadge = true
+                                focusManager.clearFocus()
                                 Toast.makeText(
                                     context,
                                     "Username saved locally as \"$trimmedInput\"! 🎮",
@@ -231,8 +238,10 @@ fun SettingsScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PlayfulPurple,
                         unfocusedBorderColor = ToyboxBorder,
+                        errorBorderColor = MaterialTheme.colorScheme.error,
                         focusedContainerColor = MaterialTheme.colorScheme.background,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.background
+                        unfocusedContainerColor = MaterialTheme.colorScheme.background,
+                        errorContainerColor = MaterialTheme.colorScheme.background
                     ),
                     trailingIcon = {
                         if (usernameInput.isNotEmpty()) {
@@ -247,51 +256,88 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    },
+                    supportingText = {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isBlank) {
+                                Text(
+                                    text = "Username cannot be empty",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            } else if (isChanged) {
+                                Text(
+                                    text = "● Unsaved changes",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = PlayfulPurple
+                                )
+                            } else {
+                                Text(
+                                    text = "✓ Battle name active",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
+                            }
+
+                            Text(
+                                text = if (remainingChars == 1) "1 character remaining" else "$remainingChars characters remaining",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = if (remainingChars <= 3) FontWeight.Bold else FontWeight.Normal
+                                ),
+                                color = when {
+                                    remainingChars == 0 -> MaterialTheme.colorScheme.error
+                                    remainingChars <= 3 -> PlayfulOrange
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.testTag("setting_characters_remaining")
+                            )
+                        }
                     }
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (usernameInput.isBlank()) {
-                            "Username cannot be empty"
-                        } else {
-                            "${usernameInput.length}/16 characters"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (usernameInput.isBlank()) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                ChunkyButton(
+                    text = when {
+                        showSavedBadge -> "Saved! ✓"
+                        isChanged -> "Save Username"
+                        else -> "Username Saved ✓"
+                    },
+                    leadingEmoji = when {
+                        showSavedBadge -> "✅"
+                        isChanged -> "💾"
+                        else -> "✓"
+                    },
+                    onClick = {
+                        if (trimmedInput.isNotEmpty()) {
+                            viewModel.setUsername(trimmedInput)
+                            usernameInput = trimmedInput
+                            showSavedBadge = true
+                            focusManager.clearFocus()
+                            Toast.makeText(
+                                context,
+                                "Username saved locally as \"$trimmedInput\"! 🎮",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
-                    )
-
-                    ChunkyButton(
-                        text = if (showSavedBadge) "Saved! ✓" else "Save Username",
-                        onClick = {
-                            if (trimmedInput.isNotEmpty()) {
-                                viewModel.setUsername(trimmedInput)
-                                showSavedBadge = true
-                                Toast.makeText(
-                                    context,
-                                    "Username saved locally as \"$trimmedInput\"! 🎮",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        },
-                        enabled = trimmedInput.isNotEmpty() && (!showSavedBadge && (isChanged || usernameInput != settings.username)),
-                        backgroundColor = if (showSavedBadge) PlayfulGreen else PlayfulPurple,
-                        buttonHeight = 44.dp,
-                        fontSize = 14.sp,
-                        cornerRadius = 14.dp,
-                        modifier = Modifier.testTag("save_username_button")
-                    )
-                }
+                    },
+                    enabled = trimmedInput.isNotEmpty() && !showSavedBadge && isChanged,
+                    backgroundColor = if (showSavedBadge) PlayfulGreen else PlayfulPurple,
+                    disabledBackgroundColor = PlayfulPurple.copy(alpha = 0.12f),
+                    disabledContentColor = PlayfulPurple.copy(alpha = 0.65f),
+                    buttonHeight = 48.dp,
+                    fontSize = 15.sp,
+                    cornerRadius = 16.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("save_username_button")
+                )
             }
         }
 
