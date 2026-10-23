@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.example.core.engine.PlayerId
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -260,6 +261,50 @@ class XOSoundAndHapticManager(private val context: Context) {
         }
         if (isVibrationEnabled) {
             vibratePattern(DEFEAT_VIBRATION_PATTERN)
+        }
+    }
+
+    /**
+     * Handles round victory sound dispatch.
+     * In two-player mode (Pass the Phone / LOCAL_1V1), both Player 1 and Player 2 round victories
+     * play the victory instrumental (no failure instrumental, no vibration).
+     * In VS Bot (SOLO) and Nearby (BLUETOOTH_1V1) modes, local player win plays victory instrumental,
+     * while local player loss plays failure instrumental.
+     */
+    fun onRoundWon(
+        winner: PlayerId,
+        localPlayer: PlayerId,
+        isTwoPlayerMode: Boolean,
+        isSoundEnabled: Boolean
+    ) {
+        if (isTwoPlayerMode || winner == localPlayer) {
+            playRoundWon(isSoundEnabled)
+        } else {
+            playRoundLost(isSoundEnabled)
+        }
+    }
+
+    /**
+     * Handles whole-game match victory sound and haptic dispatch.
+     * In two-player mode (Pass the Phone / LOCAL_1V1), both Player 1 and Player 2 match victories
+     * play the victory fanfare and trigger celebratory vibration.
+     * In VS Bot (SOLO) and Nearby (BLUETOOTH_1V1) modes, local player win plays victory fanfare + celebratory vibration,
+     * while local player loss plays failure sequence + defeat vibration.
+     * Tied matches produce no victory or failure effects.
+     */
+    fun onMatchWon(
+        matchWinner: PlayerId,
+        localPlayer: PlayerId,
+        isTwoPlayerMode: Boolean,
+        isTie: Boolean,
+        isSoundEnabled: Boolean,
+        isVibrationEnabled: Boolean
+    ) {
+        if (isTie) return
+        if (isTwoPlayerMode || matchWinner == localPlayer) {
+            playMatchWon(isSoundEnabled, isVibrationEnabled)
+        } else {
+            playMatchLost(isSoundEnabled, isVibrationEnabled)
         }
     }
 

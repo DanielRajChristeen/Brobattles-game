@@ -143,21 +143,22 @@ class XOSoundAndHapticManagerTest {
 
     @Test
     fun testEventDecisionLogicForRoundAndMatchOutcomes() {
-        // Test helper simulating the event router
+        // Test helper simulating the outcome sound and haptic router
         data class TriggerEvent(val type: String, val hasSound: Boolean, val hasVibe: Boolean)
 
         fun determineEvent(
             state: XOState,
             localPlayer: PlayerId,
+            isTwoPlayerMode: Boolean,
             soundEnabled: Boolean,
             vibrationEnabled: Boolean
         ): TriggerEvent? {
             return when (val status = state.status) {
                 is GameStatus.InProgress -> null
                 is GameStatus.RoundWon -> {
-                    val didLocalWin = status.winner == localPlayer
+                    val isVictory = isTwoPlayerMode || status.winner == localPlayer
                     TriggerEvent(
-                        type = if (didLocalWin) "ROUND_WON" else "ROUND_LOST",
+                        type = if (isVictory) "ROUND_WON" else "ROUND_LOST",
                         hasSound = soundEnabled,
                         hasVibe = false // Ordinary round won/lost does not vibrate
                     )
@@ -168,9 +169,9 @@ class XOSoundAndHapticManagerTest {
                     if (isTie) {
                         null // Draw/tie handling: no effects
                     } else {
-                        val didLocalWin = status.matchWinner == localPlayer
+                        val isVictory = isTwoPlayerMode || status.matchWinner == localPlayer
                         TriggerEvent(
-                            type = if (didLocalWin) "MATCH_WON" else "MATCH_LOST",
+                            type = if (isVictory) "MATCH_WON" else "MATCH_LOST",
                             hasSound = soundEnabled,
                             hasVibe = vibrationEnabled
                         )
@@ -180,63 +181,124 @@ class XOSoundAndHapticManagerTest {
             }
         }
 
-        // 1. Ordinary Round Win for Local Player (Player 1)
-        val round1State = XOState(
+        // ==========================================
+        // 1. VS BOT MODE TESTS (isTwoPlayerMode = false)
+        // ==========================================
+        val botRound1State = XOState(
             status = GameStatus.RoundWon(PlayerId.PLAYER_1),
             roundNumber = 1,
             player1Score = 1,
             player2Score = 0,
             targetScore = 3
         )
-        val r1Event = determineEvent(round1State, PlayerId.PLAYER_1, soundEnabled = true, vibrationEnabled = true)
-        assertNotNull(r1Event)
-        assertEquals("ROUND_WON", r1Event!!.type)
-        assertTrue(r1Event.hasSound)
-        assertFalse("Ordinary round win must not trigger whole-game vibration", r1Event.hasVibe)
+        val botR1Event = determineEvent(botRound1State, PlayerId.PLAYER_1, isTwoPlayerMode = false, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(botR1Event)
+        assertEquals("ROUND_WON", botR1Event!!.type)
+        assertTrue(botR1Event.hasSound)
+        assertFalse("Ordinary round win must not trigger vibration", botR1Event.hasVibe)
 
-        // 2. Ordinary Round Loss for Local Player (Player 2 won round 2)
-        val round2State = XOState(
+        // VS Bot: Bot (Player 2) wins round -> failure instrumental
+        val botRound2State = XOState(
             status = GameStatus.RoundWon(PlayerId.PLAYER_2),
             roundNumber = 2,
             player1Score = 1,
             player2Score = 1,
             targetScore = 3
         )
-        val r2Event = determineEvent(round2State, PlayerId.PLAYER_1, soundEnabled = true, vibrationEnabled = true)
-        assertNotNull(r2Event)
-        assertEquals("ROUND_LOST", r2Event!!.type)
-        assertTrue(r2Event.hasSound)
-        assertFalse("Ordinary round loss must not trigger vibration", r2Event.hasVibe)
+        val botR2Event = determineEvent(botRound2State, PlayerId.PLAYER_1, isTwoPlayerMode = false, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(botR2Event)
+        assertEquals("ROUND_LOST", botR2Event!!.type)
+        assertTrue(botR2Event.hasSound)
+        assertFalse("Ordinary round loss must not trigger vibration", botR2Event.hasVibe)
 
-        // 3. Whole Game Won for Local Player (MatchWon takes precedence)
-        val matchWonState = XOState(
+        // VS Bot: Local human (Player 1) wins match -> victory fanfare + celebratory vibration
+        val botMatchWinState = XOState(
             status = GameStatus.MatchWon(PlayerId.PLAYER_1),
             roundNumber = 3,
             player1Score = 2,
             player2Score = 1,
             targetScore = 3
         )
-        val matchWinEvent = determineEvent(matchWonState, PlayerId.PLAYER_1, soundEnabled = true, vibrationEnabled = true)
-        assertNotNull(matchWinEvent)
-        assertEquals("MATCH_WON", matchWinEvent!!.type)
-        assertTrue(matchWinEvent.hasSound)
-        assertTrue(matchWinEvent.hasVibe)
+        val botMatchWinEvent = determineEvent(botMatchWinState, PlayerId.PLAYER_1, isTwoPlayerMode = false, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(botMatchWinEvent)
+        assertEquals("MATCH_WON", botMatchWinEvent!!.type)
+        assertTrue(botMatchWinEvent.hasSound)
+        assertTrue(botMatchWinEvent.hasVibe)
 
-        // 4. Whole Game Lost for Local Player
-        val matchLostState = XOState(
+        // VS Bot: Bot (Player 2) wins match -> failure instrumental + defeat vibration
+        val botMatchLossState = XOState(
             status = GameStatus.MatchWon(PlayerId.PLAYER_2),
             roundNumber = 3,
             player1Score = 1,
             player2Score = 2,
             targetScore = 3
         )
-        val matchLossEvent = determineEvent(matchLostState, PlayerId.PLAYER_1, soundEnabled = true, vibrationEnabled = true)
-        assertNotNull(matchLossEvent)
-        assertEquals("MATCH_LOST", matchLossEvent!!.type)
-        assertTrue(matchLossEvent.hasSound)
-        assertTrue(matchLossEvent.hasVibe)
+        val botMatchLossEvent = determineEvent(botMatchLossState, PlayerId.PLAYER_1, isTwoPlayerMode = false, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(botMatchLossEvent)
+        assertEquals("MATCH_LOST", botMatchLossEvent!!.type)
+        assertTrue(botMatchLossEvent.hasSound)
+        assertTrue(botMatchLossEvent.hasVibe)
 
-        // 5. Draw Handling: RoundDraw must produce NO event
+        // ==========================================
+        // 2. TWO-PLAYER MODE TESTS (isTwoPlayerMode = true)
+        // ==========================================
+        // Two-Player: Player 1 wins round -> victory instrumental, no failure, no vibration
+        val p1RoundWinState = XOState(
+            status = GameStatus.RoundWon(PlayerId.PLAYER_1),
+            roundNumber = 1,
+            player1Score = 1,
+            player2Score = 0,
+            targetScore = 3
+        )
+        val p1RoundWinEvent = determineEvent(p1RoundWinState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(p1RoundWinEvent)
+        assertEquals("ROUND_WON", p1RoundWinEvent!!.type)
+        assertTrue("Two-player P1 round win must play sound", p1RoundWinEvent.hasSound)
+        assertFalse("Two-player round win must not vibrate", p1RoundWinEvent.hasVibe)
+
+        // Two-Player: Player 2 wins round -> SAME victory instrumental, NO failure instrumental, no vibration
+        val p2RoundWinState = XOState(
+            status = GameStatus.RoundWon(PlayerId.PLAYER_2),
+            roundNumber = 2,
+            player1Score = 1,
+            player2Score = 1,
+            targetScore = 3
+        )
+        val p2RoundWinEvent = determineEvent(p2RoundWinState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(p2RoundWinEvent)
+        assertEquals("ROUND_WON", p2RoundWinEvent!!.type)
+        assertTrue("Two-player P2 round win must play victory instrumental", p2RoundWinEvent.hasSound)
+        assertFalse("Two-player round win must not vibrate", p2RoundWinEvent.hasVibe)
+
+        // Two-Player: Player 1 wins the entire match -> victory fanfare + celebratory vibration
+        val p1MatchWinState = XOState(
+            status = GameStatus.MatchWon(PlayerId.PLAYER_1),
+            roundNumber = 3,
+            player1Score = 2,
+            player2Score = 1,
+            targetScore = 3
+        )
+        val p1MatchWinEvent = determineEvent(p1MatchWinState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(p1MatchWinEvent)
+        assertEquals("MATCH_WON", p1MatchWinEvent!!.type)
+        assertTrue("Two-player P1 match win must play victory fanfare", p1MatchWinEvent.hasSound)
+        assertTrue("Two-player P1 match win must trigger celebratory vibration", p1MatchWinEvent.hasVibe)
+
+        // Two-Player: Player 2 wins the entire match -> SAME victory fanfare + celebratory vibration, NO failure instrumental
+        val p2MatchWinState = XOState(
+            status = GameStatus.MatchWon(PlayerId.PLAYER_2),
+            roundNumber = 3,
+            player1Score = 1,
+            player2Score = 2,
+            targetScore = 3
+        )
+        val p2MatchWinEvent = determineEvent(p2MatchWinState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = true, vibrationEnabled = true)
+        assertNotNull(p2MatchWinEvent)
+        assertEquals("MATCH_WON", p2MatchWinEvent!!.type)
+        assertTrue("Two-player P2 match win must play victory fanfare", p2MatchWinEvent.hasSound)
+        assertTrue("Two-player P2 match win must trigger celebratory vibration", p2MatchWinEvent.hasVibe)
+
+        // Two-Player: Round Draw -> No victory or failure effects
         val drawState = XOState(
             status = GameStatus.RoundDraw,
             roundNumber = 1,
@@ -244,10 +306,10 @@ class XOSoundAndHapticManagerTest {
             player2Score = 0,
             targetScore = 3
         )
-        val drawEvent = determineEvent(drawState, PlayerId.PLAYER_1, soundEnabled = true, vibrationEnabled = true)
-        assertEquals("Draw must produce no victory or failure effects", null, drawEvent)
+        val drawEvent = determineEvent(drawState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = true, vibrationEnabled = true)
+        assertEquals("Draw in two-player mode must produce no victory or failure effects", null, drawEvent)
 
-        // 6. Match Tied: Match tie must produce NO win/loss effects
+        // Two-Player: Match Tied -> No victory fanfare or vibration
         val matchTieState = XOState(
             status = GameStatus.MatchWon(PlayerId.PLAYER_1),
             roundNumber = 2,
@@ -255,17 +317,20 @@ class XOSoundAndHapticManagerTest {
             player2Score = 1,
             targetScore = 2
         )
-        val matchTieEvent = determineEvent(matchTieState, PlayerId.PLAYER_1, soundEnabled = true, vibrationEnabled = true)
+        val matchTieEvent = determineEvent(matchTieState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = true, vibrationEnabled = true)
         assertEquals("Match tied must produce no win or loss effects", null, matchTieEvent)
 
-        // 7. Independence: Sound OFF, Vibration ON
-        val soundOffEvent = determineEvent(matchWonState, PlayerId.PLAYER_1, soundEnabled = false, vibrationEnabled = true)
+        // ==========================================
+        // 3. SETTINGS INDEPENDENCE (Sound and Vibration)
+        // ==========================================
+        // Sound OFF, Vibration ON in Two-Player match win
+        val soundOffEvent = determineEvent(p2MatchWinState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = false, vibrationEnabled = true)
         assertNotNull(soundOffEvent)
         assertFalse("Sound OFF must disable sound", soundOffEvent!!.hasSound)
         assertTrue("Vibration ON must keep vibration active when sound is OFF", soundOffEvent.hasVibe)
 
-        // 8. Independence: Sound ON, Vibration OFF
-        val vibeOffEvent = determineEvent(matchWonState, PlayerId.PLAYER_1, soundEnabled = true, vibrationEnabled = false)
+        // Sound ON, Vibration OFF in Two-Player match win
+        val vibeOffEvent = determineEvent(p2MatchWinState, PlayerId.PLAYER_1, isTwoPlayerMode = true, soundEnabled = true, vibrationEnabled = false)
         assertNotNull(vibeOffEvent)
         assertTrue("Sound ON must keep sound active when vibration is OFF", vibeOffEvent!!.hasSound)
         assertFalse("Vibration OFF must disable vibration", vibeOffEvent.hasVibe)

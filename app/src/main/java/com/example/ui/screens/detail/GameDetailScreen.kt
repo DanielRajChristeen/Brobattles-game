@@ -185,6 +185,7 @@ fun GameDetailScreen(
             return@LaunchedEffect
         }
 
+        val isTwoPlayerMode = selectedMode == GameMode.LOCAL_1V1
         val localPlayer = if (selectedMode == GameMode.BLUETOOTH_1V1) {
             localPlayerId ?: PlayerId.PLAYER_1
         } else {
@@ -200,12 +201,12 @@ fun GameDetailScreen(
                 val outcomeKey = "ROUND_WON_${gameState.roundNumber}_${currentStatus.winner.name}"
                 if (lastProcessedOutcomeKey != outcomeKey) {
                     lastProcessedOutcomeKey = outcomeKey
-                    val didLocalWin = currentStatus.winner == localPlayer
-                    if (didLocalWin) {
-                        xoSoundManager.playRoundWon(settings.soundEnabled)
-                    } else {
-                        xoSoundManager.playRoundLost(settings.soundEnabled)
-                    }
+                    xoSoundManager.onRoundWon(
+                        winner = currentStatus.winner,
+                        localPlayer = localPlayer,
+                        isTwoPlayerMode = isTwoPlayerMode,
+                        isSoundEnabled = settings.soundEnabled
+                    )
                 }
             }
             is GameStatus.RoundDraw -> {
@@ -220,14 +221,14 @@ fun GameDetailScreen(
                 val outcomeKey = "MATCH_WON_${gameState.roundNumber}_${currentStatus.matchWinner.name}_${gameState.player1Score}_${gameState.player2Score}"
                 if (lastProcessedOutcomeKey != outcomeKey) {
                     lastProcessedOutcomeKey = outcomeKey
-                    if (!isTie) {
-                        val didLocalWin = currentStatus.matchWinner == localPlayer
-                        if (didLocalWin) {
-                            xoSoundManager.playMatchWon(settings.soundEnabled, settings.vibrationEnabled)
-                        } else {
-                            xoSoundManager.playMatchLost(settings.soundEnabled, settings.vibrationEnabled)
-                        }
-                    }
+                    xoSoundManager.onMatchWon(
+                        matchWinner = currentStatus.matchWinner,
+                        localPlayer = localPlayer,
+                        isTwoPlayerMode = isTwoPlayerMode,
+                        isTie = isTie,
+                        isSoundEnabled = settings.soundEnabled,
+                        isVibrationEnabled = settings.vibrationEnabled
+                    )
                 }
             }
             else -> {
