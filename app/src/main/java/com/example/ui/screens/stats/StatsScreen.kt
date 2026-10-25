@@ -61,7 +61,13 @@ fun StatsScreen(
     val matches by viewModel.matchHistory.collectAsState()
     val totalMatches by viewModel.totalMatchesCount.collectAsState()
 
-    val p1Wins = remember(matches) { matches.count { it.winner == "PLAYER_1" } }
+    val p1Wins = remember(matches) {
+        matches.count {
+            it.winner == "PLAYER_1" ||
+            it.winner == "RED" ||
+            it.winner?.contains("Player 1 wins", ignoreCase = true) == true
+        }
+    }
     val winRate = remember(matches, totalMatches) {
         if (totalMatches > 0) "${(p1Wins * 100 / totalMatches)}%" else "100%"
     }
@@ -267,6 +273,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
         match.mode.contains("2 Player", ignoreCase = true)
 
     val isLudo = match.gameId.equals("ludo", ignoreCase = true) || match.gameTitle.contains("Ludo", ignoreCase = true)
+    val isSnakes = match.gameId.equals("snakes_and_ladders", ignoreCase = true) || match.gameTitle.contains("Snakes", ignoreCase = true)
     val isSolo = match.mode.equals("SOLO", ignoreCase = true) || match.mode.contains("bot", ignoreCase = true)
 
     val isDraw = match.winner.equals("DRAW", ignoreCase = true) ||
@@ -274,6 +281,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
     val isP1Winner = when {
         match.winner.equals("PLAYER_1", ignoreCase = true) -> true
         match.winner.equals("RED", ignoreCase = true) -> true
+        match.winner?.contains("Player 1 wins", ignoreCase = true) == true -> true
         match.winner.equals("PLAYER_2", ignoreCase = true) -> false
         match.winner.equals("DRAW", ignoreCase = true) -> false
         match.player1Score > match.player2Score -> true
@@ -286,7 +294,26 @@ private fun PlayfulMatchItem(match: MatchRecord) {
         match.player2Score > match.player1Score -> true
         else -> false
     }
-    val isWinner = match.winner == "PLAYER_1" || (isLudo && match.winner.equals("RED", ignoreCase = true))
+    val isWinner = match.winner == "PLAYER_1" ||
+        (isLudo && match.winner.equals("RED", ignoreCase = true)) ||
+        (isSnakes && (isP1Winner || match.winner?.contains("Player 1 wins", ignoreCase = true) == true))
+
+    val snakesWinnerPlayerNum = when {
+        match.winner?.contains("1") == true || match.winner?.uppercase() == "PLAYER_1" -> 1
+        match.winner?.contains("2") == true || match.winner?.uppercase() == "PLAYER_2" -> 2
+        match.winner?.contains("3") == true || match.winner?.uppercase() == "PLAYER_3" -> 3
+        match.winner?.contains("4") == true || match.winner?.uppercase() == "PLAYER_4" -> 4
+        match.winner?.contains("5") == true || match.winner?.uppercase() == "PLAYER_5" -> 5
+        else -> 1
+    }
+    val snakesWinnerColor = when (snakesWinnerPlayerNum) {
+        1 -> Color(0xFFEF4444)
+        2 -> Color(0xFF3B82F6)
+        3 -> Color(0xFF22C55E)
+        4 -> Color(0xFFEAB308)
+        5 -> Color(0xFF9333EA)
+        else -> PlayfulGreen
+    }
 
     Box(
         modifier = Modifier
@@ -338,6 +365,13 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                 val winnerUpper = match.winner?.uppercase() ?: ""
                 val pillText = when {
                     isDraw -> "TIE 🤝"
+                    isSnakes -> {
+                        if (isSolo) {
+                            if (snakesWinnerPlayerNum == 1) "YOU WON 🎉" else "Bot Won 🤖"
+                        } else {
+                            "Player $snakesWinnerPlayerNum wins"
+                        }
+                    }
                     isLudo -> when (winnerUpper) {
                         "RED" -> if (isSolo) "YOU WON 🎉" else "Red wins 🔴"
                         "GREEN" -> "Green wins 🟢"
@@ -357,6 +391,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
 
                 val pillBg = when {
                     isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> MaterialTheme.colorScheme.surfaceVariant
+                    isSnakes -> snakesWinnerColor.copy(alpha = 0.18f)
                     isLudo -> when (winnerUpper) {
                         "RED" -> Color(0xFFEA4335).copy(alpha = 0.18f)
                         "GREEN" -> Color(0xFF34A853).copy(alpha = 0.18f)
@@ -372,6 +407,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
 
                 val pillTextColor = when {
                     isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> MaterialTheme.colorScheme.onSurfaceVariant
+                    isSnakes -> snakesWinnerColor
                     isLudo -> when (winnerUpper) {
                         "RED" -> Color(0xFFC62828)
                         "GREEN" -> Color(0xFF2E7D32)

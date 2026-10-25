@@ -39,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,10 +78,21 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
+fun calculateTokenOffset(index: Int, total: Int, cellSize: Float): Offset {
+    if (total <= 1) return Offset.Zero
+    if (total == 2) {
+        return if (index == 0) Offset(-cellSize * 0.22f, 0f) else Offset(cellSize * 0.22f, 0f)
+    }
+    val radius = cellSize * 0.23f
+    val angle = (index.toDouble() / total.toDouble()) * 2.0 * Math.PI - (Math.PI / 2.0)
+    return Offset((radius * Math.cos(angle)).toFloat(), (radius * Math.sin(angle)).toFloat())
+}
+
 @Composable
 fun SnakesAndLaddersGameView(
     selectedMode: GameMode,
     targetScore: Int = 1, // Single game mode
+    playerCount: Int = 2,
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
     onExit: () -> Unit
@@ -89,9 +101,18 @@ fun SnakesAndLaddersGameView(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
-    val engine = remember { SnakesAndLaddersGameEngine(initialTargetScore = 1) }
+    val activePlayerCount = if (selectedMode == GameMode.SOLO) 2 else playerCount.coerceIn(2, 5)
+
+    val engine = remember { SnakesAndLaddersGameEngine(initialTargetScore = 1, initialPlayerCount = activePlayerCount) }
     val bot = remember { SnakesAndLaddersBotOpponent() }
     var gameState by remember { mutableStateOf(engine.state) }
+
+    LaunchedEffect(activePlayerCount) {
+        if (engine.playerCount != activePlayerCount) {
+            engine.setPlayerCount(activePlayerCount)
+            gameState = engine.state
+        }
+    }
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
@@ -112,17 +133,19 @@ fun SnakesAndLaddersGameView(
     // Board Dimensions in Px
     var boardPixelSize by remember { mutableFloatStateOf(0f) }
 
-    // Visual Screen Coordinates for P1 & P2
-    var p1Coord by remember { mutableStateOf<Offset?>(null) }
-    var p2Coord by remember { mutableStateOf<Offset?>(null) }
-    var p1Square by remember { mutableIntStateOf(gameState.p1Position) }
-    var p2Square by remember { mutableIntStateOf(gameState.p2Position) }
-
-    // Stick-Figure Animation States
-    var p1Pose by remember { mutableStateOf(TokenPose.IDLE) }
-    var p2Pose by remember { mutableStateOf(TokenPose.IDLE) }
-    var p1LimbPhase by remember { mutableFloatStateOf(0f) }
-    var p2LimbPhase by remember { mutableFloatStateOf(0f) }
+    // Visual Screen Coordinates & State for all active players
+    val playerSquares = remember(activePlayerCount) {
+        mutableStateListOf<Int>().apply { repeat(activePlayerCount) { add(1) } }
+    }
+    val playerCoords = remember(activePlayerCount) {
+        mutableStateListOf<Offset?>().apply { repeat(activePlayerCount) { add(null) } }
+    }
+    val playerPoses = remember(activePlayerCount) {
+        mutableStateListOf<TokenPose>().apply { repeat(activePlayerCount) { add(TokenPose.IDLE) } }
+    }
+    val playerLimbPhases = remember(activePlayerCount) {
+        mutableStateListOf<Float>().apply { repeat(activePlayerCount) { add(0f) } }
+    }
 
     // Snake Wiggle Animation
     var activeSnakeHead by remember { mutableStateOf<Int?>(null) }
@@ -140,11 +163,23 @@ fun SnakesAndLaddersGameView(
         return SnakesAndLaddersBoard.getSquareCenter(square, cellSize)
     }
 
+    fun resetAllPlayers() {
+        for (i in 0 until activePlayerCount) {
+            if (i < playerSquares.size) playerSquares[i] = 1
+            if (i < playerCoords.size) playerCoords[i] = getCellOffset(1)
+            if (i < playerPoses.size) playerPoses[i] = TokenPose.IDLE
+            if (i < playerLimbPhases.size) playerLimbPhases[i] = 0f
+        }
+    }
+
     // Initial position setup when board size is measured
-    LaunchedEffect(boardPixelSize) {
+    LaunchedEffect(boardPixelSize, activePlayerCount) {
         if (boardPixelSize > 0f) {
-            p1Coord = getCellOffset(p1Square)
-            p2Coord = getCellOffset(p2Square)
+            for (i in 0 until activePlayerCount) {
+                if (i < playerCoords.size && i < playerSquares.size) {
+                    playerCoords[i] = getCellOffset(playerSquares[i])
+                }
+            }
         }
     }
 
@@ -154,8 +189,13 @@ fun SnakesAndLaddersGameView(
     fun executeMovement(player: PlayerId, roll: Int) {
         scope.launch {
             isMoving = true
+            val pIndex = player.ordinal
+            if (pIndex >= activePlayerCount || pIndex >= playerSquares.size) {
+                isMoving = false
+                return@launch
+            }
             val cellSize = boardPixelSize / 10f
-            val startSquare = if (player == PlayerId.PLAYER_1) p1Square else p2Square
+            val startSquare = playerSquares[pIndex]
             val targetSquare = startSquare + roll
 
             // 1. Check Exact Roll Rule
@@ -182,31 +222,33 @@ fun SnakesAndLaddersGameView(
                     val currentX = prevTarget.x + (stepTarget.x - prevTarget.x) * progress
                     val currentY = prevTarget.y + (stepTarget.y - prevTarget.y) * progress
 
-                    if (player == PlayerId.PLAYER_1) {
-                        p1Coord = Offset(currentX, currentY)
-                        p1Pose = TokenPose.HOPPING
-                        p1LimbPhase = progress
-                    } else {
-                        p2Coord = Offset(currentX, currentY)
-                        p2Pose = TokenPose.HOPPING
-                        p2LimbPhase = progress
+                    if (pIndex < playerCoords.size) {
+                        playerCoords[pIndex] = Offset(currentX, currentY)
+                        playerPoses[pIndex] = TokenPose.HOPPING
+                        playerLimbPhases[pIndex] = progress
                     }
                     delay(20)
                 }
 
-                if (player == PlayerId.PLAYER_1) p1Square = step else p2Square = step
+                if (pIndex < playerSquares.size) {
+                    playerSquares[pIndex] = step
+                }
                 vibrate()
                 delay(40)
             }
 
-            if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.IDLE else p2Pose = TokenPose.IDLE
+            if (pIndex < playerPoses.size) {
+                playerPoses[pIndex] = TokenPose.IDLE
+            }
             delay(180)
 
             // 3. Check Ladder: Climb DIRECTLY along the ladder's geometric path!
             val ladder = SnakesAndLaddersBoard.LADDERS.find { it.bottom == targetSquare }
             if (ladder != null) {
                 actionBanner = "Climbing ladder! 🪜"
-                if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.CLIMBING else p2Pose = TokenPose.CLIMBING
+                if (pIndex < playerPoses.size) {
+                    playerPoses[pIndex] = TokenPose.CLIMBING
+                }
                 vibrate()
 
                 val climbSteps = 24
@@ -214,25 +256,18 @@ fun SnakesAndLaddersGameView(
                     val t = s.toFloat() / climbSteps
                     val pt = SnakesAndLaddersBoard.getLadderPoint(ladder, t, cellSize)
 
-                    if (player == PlayerId.PLAYER_1) {
-                        p1Coord = pt
-                        p1LimbPhase = t * 4f // Multiple limb cycles
-                    } else {
-                        p2Coord = pt
-                        p2LimbPhase = t * 4f
+                    if (pIndex < playerCoords.size) {
+                        playerCoords[pIndex] = pt
+                        playerLimbPhases[pIndex] = t * 4f // Multiple limb cycles
                     }
                     delay(25)
                 }
 
                 // Land on ladder top
-                if (player == PlayerId.PLAYER_1) {
-                    p1Square = ladder.top
-                    p1Coord = getCellOffset(ladder.top)
-                    p1Pose = TokenPose.IDLE
-                } else {
-                    p2Square = ladder.top
-                    p2Coord = getCellOffset(ladder.top)
-                    p2Pose = TokenPose.IDLE
+                if (pIndex < playerSquares.size) {
+                    playerSquares[pIndex] = ladder.top
+                    playerCoords[pIndex] = getCellOffset(ladder.top)
+                    playerPoses[pIndex] = TokenPose.IDLE
                 }
                 vibrate()
                 delay(220)
@@ -244,7 +279,9 @@ fun SnakesAndLaddersGameView(
             if (snake != null) {
                 actionBanner = "Oops! Snake slide! 🐍"
                 activeSnakeHead = snake.head
-                if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.SLIDING else p2Pose = TokenPose.SLIDING
+                if (pIndex < playerPoses.size) {
+                    playerPoses[pIndex] = TokenPose.SLIDING
+                }
                 vibrate()
 
                 val slideSteps = 26
@@ -253,12 +290,9 @@ fun SnakesAndLaddersGameView(
                     snakeWigglePhase = t * 14f // Snake wiggles dynamically!
                     val pt = SnakesAndLaddersBoard.getSnakePoint(snake, t, cellSize, snakeWigglePhase)
 
-                    if (player == PlayerId.PLAYER_1) {
-                        p1Coord = pt
-                        p1LimbPhase = t * 2f
-                    } else {
-                        p2Coord = pt
-                        p2LimbPhase = t * 2f
+                    if (pIndex < playerCoords.size) {
+                        playerCoords[pIndex] = pt
+                        playerLimbPhases[pIndex] = t * 2f
                     }
                     delay(25)
                 }
@@ -266,14 +300,10 @@ fun SnakesAndLaddersGameView(
                 // Land on snake tail
                 activeSnakeHead = null
                 snakeWigglePhase = 0f
-                if (player == PlayerId.PLAYER_1) {
-                    p1Square = snake.tail
-                    p1Coord = getCellOffset(snake.tail)
-                    p1Pose = TokenPose.IDLE
-                } else {
-                    p2Square = snake.tail
-                    p2Coord = getCellOffset(snake.tail)
-                    p2Pose = TokenPose.IDLE
+                if (pIndex < playerSquares.size) {
+                    playerSquares[pIndex] = snake.tail
+                    playerCoords[pIndex] = getCellOffset(snake.tail)
+                    playerPoses[pIndex] = TokenPose.IDLE
                 }
                 vibrate()
                 delay(220)
@@ -287,18 +317,22 @@ fun SnakesAndLaddersGameView(
 
             // 6. Check Win Condition
             if (gameState.status is GameStatus.MatchWon) {
-                if (player == PlayerId.PLAYER_1) p1Pose = TokenPose.CELEBRATING else p2Pose = TokenPose.CELEBRATING
+                if (pIndex < playerPoses.size) {
+                    playerPoses[pIndex] = TokenPose.CELEBRATING
+                }
                 delay(1300)
                 showWinDialog = true
                 if (!matchRecorded) {
                     matchRecorded = true
+                    val winnerNum = player.ordinal + 1
+                    val winnerString = "Player $winnerNum wins"
                     viewModel.repository.recordMatch(
                         gameId = "snakes_and_ladders",
                         gameTitle = "Snakes & Ladders",
                         mode = selectedMode.name,
                         player1Score = if (player == PlayerId.PLAYER_1) 1 else 0,
                         player2Score = if (player == PlayerId.PLAYER_2) 1 else 0,
-                        winner = player.name,
+                        winner = winnerString,
                         durationSeconds = 40
                     )
                 }
@@ -354,12 +388,7 @@ fun SnakesAndLaddersGameView(
                     "SNAKES_REMATCH" -> {
                         engine.resetGame(1)
                         gameState = engine.state
-                        p1Square = 1
-                        p2Square = 1
-                        p1Coord = getCellOffset(1)
-                        p2Coord = getCellOffset(1)
-                        p1Pose = TokenPose.IDLE
-                        p2Pose = TokenPose.IDLE
+                        resetAllPlayers()
                         actionBanner = null
                         showWinDialog = false
                         matchRecorded = false
@@ -418,18 +447,31 @@ fun SnakesAndLaddersGameView(
                 gameState.status is GameStatus.MatchWon -> "WINNER! 🏆"
                 isRolling -> "ROLLING... 🎲"
                 isMoving -> "MOVING... 🚶"
-                selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_1 -> "YOUR TURN 🎲"
-                selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_2 -> "BOT'S TURN 🤖"
-                isNearbyMode && gameState.activePlayer == localPlayer -> "YOUR TURN 🎲"
-                isNearbyMode -> "OPPONENT'S TURN 🎲"
-                gameState.activePlayer == PlayerId.PLAYER_1 -> "PLAYER 1'S TURN 🎲"
-                else -> "PLAYER 2'S TURN 🎲"
+                selectedMode == GameMode.SOLO -> {
+                    if (gameState.activePlayer == PlayerId.PLAYER_1) {
+                        if (gameState.extraTurnGranted) "YOUR EXTRA TURN! 🎲" else "YOUR TURN 🎲"
+                    } else {
+                        if (gameState.extraTurnGranted) "BOT'S EXTRA TURN! 🤖" else "BOT'S TURN 🤖"
+                    }
+                }
+                isNearbyMode -> {
+                    if (gameState.activePlayer == localPlayer) {
+                        if (gameState.extraTurnGranted) "YOUR EXTRA TURN! 🎲" else "YOUR TURN 🎲"
+                    } else {
+                        if (gameState.extraTurnGranted) "OPPONENT'S EXTRA TURN! 🎲" else "OPPONENT'S TURN 🎲"
+                    }
+                }
+                else -> {
+                    val pNum = gameState.activePlayer.ordinal + 1
+                    if (gameState.extraTurnGranted) "PLAYER $pNum EXTRA TURN! 🎲" else "PLAYER $pNum'S TURN 🎲"
+                }
             }
 
+            val activeColor = SnakesPlayerColors.getOrElse(gameState.activePlayer.ordinal) { PlayfulGreen }
             PlayfulPill(
                 text = turnText,
-                backgroundColor = PlayfulGreen.copy(alpha = 0.14f),
-                textColor = PlayfulGreen
+                backgroundColor = activeColor.copy(alpha = 0.14f),
+                textColor = activeColor
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -455,14 +497,10 @@ fun SnakesAndLaddersGameView(
                         .background(MaterialTheme.colorScheme.surface)
                         .border(1.5.dp, ToyboxBorder, CircleShape)
                         .bouncyClickable {
+                            engine.setPlayerCount(activePlayerCount)
                             engine.resetGame(1)
                             gameState = engine.state
-                            p1Square = 1
-                            p2Square = 1
-                            p1Coord = getCellOffset(1)
-                            p2Coord = getCellOffset(1)
-                            p1Pose = TokenPose.IDLE
-                            p2Pose = TokenPose.IDLE
+                            resetAllPlayers()
                             actionBanner = null
                             showWinDialog = false
                             matchRecorded = false
@@ -482,71 +520,72 @@ fun SnakesAndLaddersGameView(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // --- 2. LIGHTWEIGHT PLAYER POSITION HUD (NO ROUND ACCUMULATION) ---
-        Box(
+        // --- 2. LIGHTWEIGHT PLAYER POSITION HUD ---
+        if (actionBanner != null) {
+            PlayfulPill(
+                text = actionBanner ?: "",
+                backgroundColor = PlayfulGreen.copy(alpha = 0.15f),
+                textColor = PlayfulGreen
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+        }
+
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                .border(1.5.dp, ToyboxBorder, RoundedCornerShape(20.dp))
-                .padding(vertical = 10.dp, horizontal = 16.dp)
+                .testTag("snakes_player_hud"),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Player 1
-                Column(horizontalAlignment = Alignment.Start) {
-                    val p1Label = when {
-                        selectedMode == GameMode.SOLO -> "YOU 🟠"
-                        isNearbyMode -> if (localPlayer == PlayerId.PLAYER_1) "YOU 🟠" else "OPPONENT 🟠"
-                        else -> "PLAYER 1 🟠"
-                    }
-                    Text(
-                        text = p1Label,
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                        color = PlayfulOrange
-                    )
-                    Text(
-                        text = "Square $p1Square",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+            for (i in 0 until activePlayerCount) {
+                val pColor = SnakesPlayerColors.getOrElse(i) { PlayfulGreen }
+                val pEmoji = SnakesPlayerEmojis.getOrElse(i) { "🔴" }
+                val isActiveTurn = gameState.activePlayer.ordinal == i && gameState.status is GameStatus.InProgress
+                val pSquare = playerSquares.getOrElse(i) { 1 }
+
+                val pName = when {
+                    selectedMode == GameMode.SOLO && i == 0 -> "YOU"
+                    selectedMode == GameMode.SOLO && i == 1 -> "BOT"
+                    isNearbyMode && i == 0 -> if (localPlayer == PlayerId.PLAYER_1) "YOU" else "OPP"
+                    isNearbyMode && i == 1 -> if (localPlayer == PlayerId.PLAYER_2) "YOU" else "OPP"
+                    else -> "P${i + 1}"
                 }
 
-                // Action Banner
-                if (actionBanner != null) {
-                    PlayfulPill(
-                        text = actionBanner ?: "",
-                        backgroundColor = PlayfulGreen.copy(alpha = 0.15f),
-                        textColor = PlayfulGreen
-                    )
-                } else {
-                    PlayfulPill(
-                        text = "FIRST TO 100",
-                        backgroundColor = MaterialTheme.colorScheme.surfaceVariant,
-                        textColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                // Player 2
-                Column(horizontalAlignment = Alignment.End) {
-                    val p2Label = when {
-                        selectedMode == GameMode.SOLO -> "BOT 🟣"
-                        isNearbyMode -> if (localPlayer == PlayerId.PLAYER_2) "YOU 🟣" else "OPPONENT 🟣"
-                        else -> "PLAYER 2 🟣"
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isActiveTurn) pColor.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface)
+                        .border(
+                            width = if (isActiveTurn) 2.dp else 1.dp,
+                            color = if (isActiveTurn) pColor else ToyboxBorder,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(text = pEmoji, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = pName,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
+                                color = if (isActiveTurn) pColor else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Sq $pSquare",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     }
-                    Text(
-                        text = p2Label,
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                        color = PlayfulPurple
-                    )
-                    Text(
-                        text = "Square $p2Square",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
                 }
             }
         }
@@ -567,21 +606,41 @@ fun SnakesAndLaddersGameView(
 
             val cellSize = boardPx / 10f
 
-            // Offset tokens slightly if occupying the exact same square
-            val isSame = p1Square == p2Square && p1Pose == TokenPose.IDLE && p2Pose == TokenPose.IDLE
-            val p1Pos = p1Coord ?: getCellOffset(p1Square)
-            val p2Pos = p2Coord ?: getCellOffset(p2Square)
+            // Build PlayerTokenVisual list for all active players
+            val tokensList = (0 until activePlayerCount).map { i ->
+                val sq = playerSquares.getOrElse(i) { 1 }
+                val basePos = playerCoords.getOrNull(i) ?: getCellOffset(sq)
+                val pose = playerPoses.getOrElse(i) { TokenPose.IDLE }
+                val limbPhase = playerLimbPhases.getOrElse(i) { 0f }
+                val color = SnakesPlayerColors.getOrElse(i) { PlayfulGreen }
 
-            val p1FinalPos = if (isSame) Offset(p1Pos.x - cellSize * 0.22f, p1Pos.y) else p1Pos
-            val p2FinalPos = if (isSame) Offset(p2Pos.x + cellSize * 0.22f, p2Pos.y) else p2Pos
+                // If idle, offset tokens sharing the exact same square
+                val finalPos = if (pose == TokenPose.IDLE) {
+                    val sameSquareIndices = (0 until activePlayerCount).filter { j ->
+                        playerSquares.getOrElse(j) { 1 } == sq && playerPoses.getOrElse(j) { TokenPose.IDLE } == TokenPose.IDLE
+                    }
+                    val groupIndex = sameSquareIndices.indexOf(i)
+                    val groupSize = sameSquareIndices.size
+                    if (groupSize > 1) {
+                        val offset = calculateTokenOffset(groupIndex, groupSize, cellSize)
+                        Offset(basePos.x + offset.x, basePos.y + offset.y)
+                    } else {
+                        basePos
+                    }
+                } else {
+                    basePos
+                }
+
+                PlayerTokenVisual(
+                    position = finalPos,
+                    pose = pose,
+                    limbPhase = limbPhase,
+                    color = color
+                )
+            }
 
             SnakesAndLaddersBoardView(
-                p1VisualPos = p1FinalPos,
-                p2VisualPos = p2FinalPos,
-                p1Pose = p1Pose,
-                p2Pose = p2Pose,
-                p1LimbPhase = p1LimbPhase,
-                p2LimbPhase = p2LimbPhase,
+                playerTokens = tokensList,
                 activeSnakeHead = activeSnakeHead,
                 snakeWigglePhase = snakeWigglePhase,
                 modifier = Modifier.fillMaxSize()
@@ -598,6 +657,9 @@ fun SnakesAndLaddersGameView(
                     isNearbyMode -> gameState.activePlayer == localPlayer
                     else -> true
                 })
+
+        val activePlayerIndex = gameState.activePlayer.ordinal
+        val rollPlayerColor = SnakesPlayerColors.getOrElse(activePlayerIndex) { PlayfulGreen }
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -616,7 +678,13 @@ fun SnakesAndLaddersGameView(
                 text = when {
                     isRolling -> "ROLLING... 🎲"
                     isMoving -> "MOVING... 🚶"
-                    canRoll -> "TAP DICE TO ROLL! 🎲"
+                    canRoll -> {
+                        if (selectedMode == GameMode.LOCAL_1V1) {
+                            "PLAYER ${activePlayerIndex + 1}: TAP TO ROLL! 🎲"
+                        } else {
+                            "TAP DICE TO ROLL! 🎲"
+                        }
+                    }
                     selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_2 -> "Bot is rolling... 🤖"
                     isNearbyMode && gameState.activePlayer != localPlayer -> "Opponent's turn to roll... 🎲"
                     else -> "WAITING..."
@@ -625,7 +693,7 @@ fun SnakesAndLaddersGameView(
                     fontWeight = FontWeight.Black,
                     letterSpacing = 0.5.sp
                 ),
-                color = if (canRoll) PlayfulGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (canRoll) rollPlayerColor else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -647,6 +715,7 @@ fun SnakesAndLaddersGameView(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("• Roll the dice to move your stick figure forward.", style = MaterialTheme.typography.bodyMedium)
+                    Text("• 🎲 Roll a 1 or 6 to get an extra turn!", style = MaterialTheme.typography.bodyMedium, color = PlayfulGreen, fontWeight = FontWeight.Bold)
                     Text("• 🪜 Climb ladders directly to the top!", style = MaterialTheme.typography.bodyMedium, color = PlayfulGreen)
                     Text("• 🐍 Slide down snakes all the way to the tail!", style = MaterialTheme.typography.bodyMedium, color = PlayfulOrange)
                     Text("• First to 100 wins! (Exact roll required).", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
@@ -666,24 +735,20 @@ fun SnakesAndLaddersGameView(
     // Victory Dialog (Single Game - No Next Round!)
     if (showWinDialog) {
         val winner = (gameState.status as? GameStatus.MatchWon)?.matchWinner ?: PlayerId.PLAYER_1
-        val isP1Winner = winner == PlayerId.PLAYER_1
+        val winnerNumber = winner.ordinal + 1
+        val winnerColor = SnakesPlayerColors.getOrElse(winner.ordinal) { PlayfulGreen }
 
         AlertDialog(
             onDismissRequest = { /* require user action */ },
             shape = RoundedCornerShape(26.dp),
             containerColor = MaterialTheme.colorScheme.surface,
-            icon = { Text(if (isP1Winner) "🏆" else "😵", fontSize = 48.sp) },
+            icon = { Text("🏆", fontSize = 48.sp) },
             title = {
-                val winTitle = when {
-                    selectedMode == GameMode.SOLO -> if (isP1Winner) "YOU WIN! 🎉" else "BOT WON! 🤖"
-                    isNearbyMode -> if (winner == localPlayer) "YOU WIN! 🎉" else "OPPONENT WINS! 👑"
-                    else -> if (isP1Winner) "PLAYER 1 WINS! 👑" else "PLAYER 2 WINS! 👑"
-                }
                 Text(
-                    text = winTitle,
+                    text = "Player $winnerNumber wins",
                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
                     textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = winnerColor
                 )
             },
             text = {
@@ -698,7 +763,7 @@ fun SnakesAndLaddersGameView(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Pure classic board game fun!",
+                        text = "Classic Snakes & Ladders champion!",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -708,14 +773,10 @@ fun SnakesAndLaddersGameView(
                 ChunkyButton(
                     text = "PLAY AGAIN 🔄",
                     onClick = {
+                        engine.setPlayerCount(activePlayerCount)
                         engine.resetGame(1)
                         gameState = engine.state
-                        p1Square = 1
-                        p2Square = 1
-                        p1Coord = getCellOffset(1)
-                        p2Coord = getCellOffset(1)
-                        p1Pose = TokenPose.IDLE
-                        p2Pose = TokenPose.IDLE
+                        resetAllPlayers()
                         actionBanner = null
                         showWinDialog = false
                         matchRecorded = false

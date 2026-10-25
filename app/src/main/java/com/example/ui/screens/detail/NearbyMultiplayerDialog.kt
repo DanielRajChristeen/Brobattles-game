@@ -427,7 +427,7 @@ private fun HostLobbyContent(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        val snakesEmojis = listOf("🔴", "🟣", "🔵", "🟤", "🟢")
+        val snakesEmojis = listOf("🔴", "🔵", "🟢", "🟡", "🟣")
         val ludoRoles = listOf("HOST • RED 🔴", "PLAYER 2 • GREEN 🟢", "PLAYER 3 • YELLOW 🟡", "PLAYER 4 • BLUE 🔵")
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

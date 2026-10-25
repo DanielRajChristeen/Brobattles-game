@@ -120,6 +120,7 @@ fun GameDetailScreen(
     var xoDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
     var ludoPlayerCount by rememberSaveable { mutableIntStateOf(2) }
     var ludoBotDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
+    var snakesPlayerCount by rememberSaveable { mutableIntStateOf(2) }
     var targetScore by remember { mutableIntStateOf(game.defaultTargetScore) }
     var isPlaying by rememberSaveable { mutableStateOf(false) }
 
@@ -470,6 +471,8 @@ fun GameDetailScreen(
                 onLudoPlayerCountSelected = { ludoPlayerCount = it },
                 ludoBotDifficulty = ludoBotDifficulty,
                 onLudoBotDifficultySelected = { ludoBotDifficulty = it },
+                snakesPlayerCount = snakesPlayerCount,
+                onSnakesPlayerCountSelected = { snakesPlayerCount = it },
                 targetScore = targetScore,
                 onTargetScoreSelected = { targetScore = it },
                 onBack = onBack,
@@ -550,6 +553,7 @@ fun GameDetailScreen(
                     SnakesAndLaddersGameView(
                         selectedMode = selectedMode,
                         targetScore = targetScore,
+                        playerCount = snakesPlayerCount,
                         viewModel = viewModel,
                         onChangeMode = {
                             isPlaying = false
@@ -691,6 +695,8 @@ private fun CleanLaunchView(
     onLudoPlayerCountSelected: (Int) -> Unit = {},
     ludoBotDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
     onLudoBotDifficultySelected: (BotDifficulty) -> Unit = {},
+    snakesPlayerCount: Int = 2,
+    onSnakesPlayerCountSelected: (Int) -> Unit = {},
     targetScore: Int,
     onTargetScoreSelected: (Int) -> Unit,
     onBack: () -> Unit,
@@ -1156,6 +1162,71 @@ private fun CleanLaunchView(
                                     letterSpacing = 0.5.sp
                                 ),
                                 color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // SNAKES AND LADDERS: LOCAL MULTIPLAYER PLAYER COUNT (2 to 5 players)
+        if (game.id.equals("snakes_and_ladders", ignoreCase = true) && selectedMode == GameMode.LOCAL_1V1) {
+            Spacer(modifier = Modifier.height(18.dp))
+            Text(
+                text = "PLAYER COUNT (2–5 PLAYERS)",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp
+                ),
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("snakes_player_count_dropdown"),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    2 to "🔴🔵",
+                    3 to "🔴🔵🟢",
+                    4 to "4-PLY",
+                    5 to "5-PLY"
+                ).forEach { (count, emj) ->
+                    val isSelected = snakesPlayerCount == count
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(54.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isSelected) accentColor else MaterialTheme.colorScheme.surface
+                            )
+                            .border(
+                                width = if (isSelected) 2.5.dp else 1.5.dp,
+                                color = if (isSelected) accentColor else colors.border,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .bouncyClickable { onSnakesPlayerCountSelected(count) }
+                            .testTag("snakes_player_count_$count"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "${count}P",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Black
+                                ),
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = emj,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp
+                                ),
+                                color = if (isSelected) Color.White.copy(alpha = 0.9f) else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }

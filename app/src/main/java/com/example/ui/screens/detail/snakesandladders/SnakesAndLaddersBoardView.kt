@@ -42,18 +42,18 @@ data class PlayerTokenVisual(
 
 val SnakesPlayerColors = listOf(
     Color(0xFFEF4444), // Player 1: 🔴 Red
-    Color(0xFF9333EA), // Player 2: 🟣 Purple
-    Color(0xFF3B82F6), // Player 3: 🔵 Blue
-    Color(0xFF8D6E63), // Player 4: 🟤 Brown
-    Color(0xFF22C55E)  // Player 5: 🟢 Green
+    Color(0xFF3B82F6), // Player 2: 🔵 Blue
+    Color(0xFF22C55E), // Player 3: 🟢 Green
+    Color(0xFFEAB308), // Player 4: 🟡 Yellow
+    Color(0xFF9333EA)  // Player 5: 🟣 Purple
 )
 
 val SnakesPlayerEmojis = listOf(
-    "🔴", // Player 1
-    "🟣", // Player 2
-    "🔵", // Player 3
-    "🟤", // Player 4
-    "🟢"  // Player 5
+    "🔴", // Player 1: Red
+    "🔵", // Player 2: Blue
+    "🟢", // Player 3: Green
+    "🟡", // Player 4: Yellow
+    "🟣"  // Player 5: Purple
 )
 
 @Composable

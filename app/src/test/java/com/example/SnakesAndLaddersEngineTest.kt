@@ -134,4 +134,120 @@ class SnakesAndLaddersEngineTest {
         assertEquals(expectedTail.x, tailPt.x, 0.01f)
         assertEquals(expectedTail.y, tailPt.y, 0.01f)
     }
+
+    @Test
+    fun `supports 2, 3, 4, and 5 players initialization`() {
+        for (count in 2..5) {
+            val engine = SnakesAndLaddersGameEngine(initialPlayerCount = count)
+            assertEquals(count, engine.playerCount)
+            assertEquals(count, engine.state.playerPositions.size)
+            assertTrue(engine.state.playerPositions.all { it == 1 })
+            assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+        }
+    }
+
+    @Test
+    fun `turn rotation for 3, 4, 5 players with non-extra-turn rolls`() {
+        // 3 Players: P1 -> P2 -> P3 -> P1
+        val engine3 = SnakesAndLaddersGameEngine(initialPlayerCount = 3)
+        engine3.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1) // roll 2
+        assertEquals(PlayerId.PLAYER_2, engine3.state.activePlayer)
+
+        engine3.makeMove(SnakesAndLaddersMove(3), PlayerId.PLAYER_2) // roll 3
+        assertEquals(PlayerId.PLAYER_3, engine3.state.activePlayer)
+
+        engine3.makeMove(SnakesAndLaddersMove(4), PlayerId.PLAYER_3) // roll 4
+        assertEquals(PlayerId.PLAYER_1, engine3.state.activePlayer)
+
+        // 5 Players: P1 -> P2 -> P3 -> P4 -> P5 -> P1
+        val engine5 = SnakesAndLaddersGameEngine(initialPlayerCount = 5)
+        assertEquals(PlayerId.PLAYER_1, engine5.state.activePlayer)
+        engine5.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1)
+        assertEquals(PlayerId.PLAYER_2, engine5.state.activePlayer)
+        engine5.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_2)
+        assertEquals(PlayerId.PLAYER_3, engine5.state.activePlayer)
+        engine5.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_3)
+        assertEquals(PlayerId.PLAYER_4, engine5.state.activePlayer)
+        engine5.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_4)
+        assertEquals(PlayerId.PLAYER_5, engine5.state.activePlayer)
+        engine5.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_5)
+        assertEquals(PlayerId.PLAYER_1, engine5.state.activePlayer)
+    }
+
+    @Test
+    fun `rolling 1 grants an extra turn`() {
+        val engine = SnakesAndLaddersGameEngine(initialPlayerCount = 3)
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+
+        // Roll 1: move 1 -> 2, extra turn granted!
+        engine.makeMove(SnakesAndLaddersMove(1), PlayerId.PLAYER_1)
+        assertEquals(2, engine.state.playerPositions[0])
+        assertTrue(engine.state.extraTurnGranted)
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+
+        // Now roll 2: move 2 -> 4 (ladder to 14), no extra turn, passes to P2
+        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1)
+        assertEquals(14, engine.state.playerPositions[0])
+        assertEquals(false, engine.state.extraTurnGranted)
+        assertEquals(PlayerId.PLAYER_2, engine.state.activePlayer)
+    }
+
+    @Test
+    fun `rolling 6 grants an extra turn even after ladder climb`() {
+        val engine = SnakesAndLaddersGameEngine(initialPlayerCount = 4)
+        // Position P1 at square 3 (so 3 + 6 = 9 -> ladder to 31)
+        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1) // P1 at 3, turn to P2
+        assertEquals(PlayerId.PLAYER_2, engine.state.activePlayer)
+
+        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_2) // turn to P3
+        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_3) // turn to P4
+        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_4) // turn back to P1
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+
+        // Roll 6: 3 + 6 = 9 (ladder to 31), extra turn granted!
+        engine.makeMove(SnakesAndLaddersMove(6), PlayerId.PLAYER_1)
+        assertEquals(31, engine.state.playerPositions[0])
+        assertTrue(engine.state.extraTurnGranted)
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+    }
+
+    @Test
+    fun `exact finish at 100 wins game immediately and formats winner correctly`() {
+        val engine = SnakesAndLaddersGameEngine(initialPlayerCount = 5)
+        // Set P4 at square 98
+        engine.syncState(
+            engine.state.copy(
+                playerPositions = listOf(1, 1, 1, 98, 1),
+                activePlayer = PlayerId.PLAYER_4
+            )
+        )
+
+        // P4 rolls 2: 98 + 2 = 100!
+        val res = engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_4)
+        assertTrue(res is com.example.core.engine.MoveResult.Success)
+        assertEquals(100, engine.state.playerPositions[3])
+        assertTrue(engine.state.status is GameStatus.MatchWon)
+        val winner = (engine.state.status as GameStatus.MatchWon).matchWinner
+        assertEquals(PlayerId.PLAYER_4, winner)
+        val winnerString = "Player ${winner.ordinal + 1} wins"
+        assertEquals("Player 4 wins", winnerString)
+    }
+
+    @Test
+    fun `overshot roll past 100 stays on current square`() {
+        val engine = SnakesAndLaddersGameEngine(initialPlayerCount = 3)
+        // P2 at square 97
+        engine.syncState(
+            engine.state.copy(
+                playerPositions = listOf(1, 97, 1),
+                activePlayer = PlayerId.PLAYER_2
+            )
+        )
+
+        // P2 rolls 5: 97 + 5 = 102 > 100
+        engine.makeMove(SnakesAndLaddersMove(5), PlayerId.PLAYER_2)
+        assertEquals(97, engine.state.playerPositions[1])
+        assertTrue(engine.state.wasOvershot)
+        assertEquals(PlayerId.PLAYER_3, engine.state.activePlayer)
+    }
 }
