@@ -181,5 +181,127 @@ class XOGameEngineTest {
             else -> "OOF 😵"
         }
         assertEquals("Player 2 wins", pillTextP2)
+
+        // Historical record with null winner but P2 had higher score
+        val recordOldP2 = recordP1.copy(winner = null, player1Score = 2, player2Score = 3)
+        val isP1Old = when {
+            recordOldP2.winner.equals("PLAYER_1", ignoreCase = true) -> true
+            recordOldP2.winner.equals("PLAYER_2", ignoreCase = true) -> false
+            recordOldP2.winner.equals("DRAW", ignoreCase = true) -> false
+            recordOldP2.player1Score > recordOldP2.player2Score -> true
+            else -> false
+        }
+        val isP2Old = when {
+            recordOldP2.winner.equals("PLAYER_2", ignoreCase = true) -> true
+            recordOldP2.winner.equals("PLAYER_1", ignoreCase = true) -> false
+            recordOldP2.winner.equals("DRAW", ignoreCase = true) -> false
+            recordOldP2.player2Score > recordOldP2.player1Score -> true
+            else -> false
+        }
+        val pillTextOldP2 = when {
+            recordOldP2.winner.equals("DRAW", ignoreCase = true) -> "TIE 🤝"
+            isXo && isLocal2Player -> when {
+                isP1Old -> "Player 1 wins"
+                isP2Old -> "Player 2 wins"
+                else -> "TIE 🤝"
+            }
+            else -> "OOF 😵"
+        }
+        assertEquals("Player 2 wins", pillTextOldP2)
+    }
+
+    @Test
+    fun testTicTacToeMatchWonDialogWinnerClassification() {
+        fun getDialogPresentation(
+            winner: PlayerId,
+            mode: com.example.core.registry.GameMode,
+            localPlayerId: PlayerId?,
+            p1Score: Int,
+            p2Score: Int
+        ): Triple<String, String, Boolean> {
+            val isP1Winner = winner == PlayerId.PLAYER_1
+            val isTie = p1Score == p2Score
+            val isLocal2Player = mode == com.example.core.registry.GameMode.LOCAL_1V1
+
+            val isVictory = when {
+                isTie -> false
+                isLocal2Player -> true
+                mode == com.example.core.registry.GameMode.BLUETOOTH_1V1 -> winner == localPlayerId
+                else -> isP1Winner
+            }
+            val didLocalWin = if (mode == com.example.core.registry.GameMode.BLUETOOTH_1V1) {
+                winner == localPlayerId
+            } else {
+                isP1Winner
+            }
+            val icon = if (isTie) "🤝" else if (isVictory) "🏆" else "😵"
+            val title = when {
+                isTie -> "MATCH TIED! 🤝"
+                mode == com.example.core.registry.GameMode.BLUETOOTH_1V1 -> if (didLocalWin) "YOU WON! 🎉" else "OPPONENT WINS! 👑"
+                isP1Winner -> if (mode == com.example.core.registry.GameMode.SOLO) "YOU WON! 🎉" else "PLAYER 1 WINS! 👑"
+                else -> if (mode == com.example.core.registry.GameMode.SOLO) "BOT WON! 🤖" else "PLAYER 2 WINS! 👑"
+            }
+            return Triple(icon, title, isVictory)
+        }
+
+        // 1. Two-Player mode: Player 1 wins -> Victory 🏆, "PLAYER 1 WINS! 👑", no defeat styling
+        val (p1Icon, p1Title, p1IsVictory) = getDialogPresentation(
+            winner = PlayerId.PLAYER_1,
+            mode = com.example.core.registry.GameMode.LOCAL_1V1,
+            localPlayerId = PlayerId.PLAYER_1,
+            p1Score = 3,
+            p2Score = 1
+        )
+        assertEquals("🏆", p1Icon)
+        assertEquals("PLAYER 1 WINS! 👑", p1Title)
+        assertTrue(p1IsVictory)
+
+        // 2. Two-Player mode: Player 2 wins -> Victory 🏆, "PLAYER 2 WINS! 👑", NO defeat styling 😵
+        val (p2Icon, p2Title, p2IsVictory) = getDialogPresentation(
+            winner = PlayerId.PLAYER_2,
+            mode = com.example.core.registry.GameMode.LOCAL_1V1,
+            localPlayerId = PlayerId.PLAYER_1,
+            p1Score = 1,
+            p2Score = 3
+        )
+        assertEquals("🏆", p2Icon)
+        assertEquals("PLAYER 2 WINS! 👑", p2Title)
+        assertTrue("Player 2 victory in local mode must be classified as a victory, not defeat", p2IsVictory)
+
+        // 3. Two-Player mode: Tie -> 🤝, "MATCH TIED! 🤝"
+        val (tieIcon, tieTitle, tieIsVictory) = getDialogPresentation(
+            winner = PlayerId.PLAYER_1,
+            mode = com.example.core.registry.GameMode.LOCAL_1V1,
+            localPlayerId = PlayerId.PLAYER_1,
+            p1Score = 2,
+            p2Score = 2
+        )
+        assertEquals("🤝", tieIcon)
+        assertEquals("MATCH TIED! 🤝", tieTitle)
+        assertFalse(tieIsVictory)
+
+        // 4. VS Bot mode: User (P1) wins -> 🏆, "YOU WON! 🎉"
+        val (botWinUserIcon, botWinUserTitle, botWinUserVictory) = getDialogPresentation(
+            winner = PlayerId.PLAYER_1,
+            mode = com.example.core.registry.GameMode.SOLO,
+            localPlayerId = PlayerId.PLAYER_1,
+            p1Score = 3,
+            p2Score = 0
+        )
+        assertEquals("🏆", botWinUserIcon)
+        assertEquals("YOU WON! 🎉", botWinUserTitle)
+        assertTrue(botWinUserVictory)
+
+        // 5. VS Bot mode: Bot (P2) wins -> 😵, "BOT WON! 🤖" (Preserved defeat styling for VS Bot)
+        val (botWinBotIcon, botWinBotTitle, botWinBotVictory) = getDialogPresentation(
+            winner = PlayerId.PLAYER_2,
+            mode = com.example.core.registry.GameMode.SOLO,
+            localPlayerId = PlayerId.PLAYER_1,
+            p1Score = 0,
+            p2Score = 3
+        )
+        assertEquals("😵", botWinBotIcon)
+        assertEquals("BOT WON! 🤖", botWinBotTitle)
+        assertFalse(botWinBotVictory)
     }
 }

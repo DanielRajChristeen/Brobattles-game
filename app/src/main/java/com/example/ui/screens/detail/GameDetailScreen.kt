@@ -1471,6 +1471,15 @@ private fun CleanXOPlayView(
         val winner = (gameState.status as GameStatus.MatchWon).matchWinner
         val isP1Winner = winner == PlayerId.PLAYER_1
         val isTie = gameState.player1Score == gameState.player2Score
+        val isLocal2Player = selectedMode == GameMode.LOCAL_1V1
+
+        // In local 2-player mode, the device hosts both players; both Player 1 and Player 2 victories are celebrated as victories
+        val isVictory = when {
+            isTie -> false
+            isLocal2Player -> true
+            selectedMode == GameMode.BLUETOOTH_1V1 -> winner == localPlayerId
+            else -> isP1Winner
+        }
 
         val didLocalWin = if (selectedMode == GameMode.BLUETOOTH_1V1) {
             winner == localPlayerId
@@ -1484,7 +1493,7 @@ private fun CleanXOPlayView(
             containerColor = MaterialTheme.colorScheme.surface,
             icon = {
                 Text(
-                    text = if (isTie) "🤝" else if (didLocalWin) "🏆" else "😵",
+                    text = if (isTie) "🤝" else if (isVictory) "🏆" else "😵",
                     fontSize = 46.sp
                 )
             },

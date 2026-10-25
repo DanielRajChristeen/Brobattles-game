@@ -257,8 +257,6 @@ private fun PlayfulMatchItem(match: MatchRecord) {
         SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(match.timestamp))
     }
 
-    val isWinner = match.winner == "PLAYER_1"
-    val isDraw = match.winner == "DRAW"
     val gameDef = remember(match.gameId) { GameRegistry.getGameById(match.gameId) }
     val accentColor = remember(gameDef) { gameDef?.let { Color(it.accentHex) } ?: PlayfulPurple }
 
@@ -267,7 +265,24 @@ private fun PlayfulMatchItem(match: MatchRecord) {
         match.mode.contains("LOCAL", ignoreCase = true) ||
         match.mode.contains("Pass the phone", ignoreCase = true) ||
         match.mode.contains("2 Player", ignoreCase = true)
-    val isP1Winner = match.winner.equals("PLAYER_1", ignoreCase = true)
+
+    val isDraw = match.winner.equals("DRAW", ignoreCase = true) ||
+        (match.winner == null && match.player1Score == match.player2Score && match.player1Score > 0)
+    val isP1Winner = when {
+        match.winner.equals("PLAYER_1", ignoreCase = true) -> true
+        match.winner.equals("PLAYER_2", ignoreCase = true) -> false
+        match.winner.equals("DRAW", ignoreCase = true) -> false
+        match.player1Score > match.player2Score -> true
+        else -> false
+    }
+    val isP2Winner = when {
+        match.winner.equals("PLAYER_2", ignoreCase = true) -> true
+        match.winner.equals("PLAYER_1", ignoreCase = true) -> false
+        match.winner.equals("DRAW", ignoreCase = true) -> false
+        match.player2Score > match.player1Score -> true
+        else -> false
+    }
+    val isWinner = match.winner == "PLAYER_1"
 
     Box(
         modifier = Modifier
@@ -318,20 +333,24 @@ private fun PlayfulMatchItem(match: MatchRecord) {
             ) {
                 val pillText = when {
                     isDraw -> "TIE 🤝"
-                    isXo && isLocal2Player -> if (isP1Winner) "Player 1 wins" else "Player 2 wins"
+                    isXo && isLocal2Player -> when {
+                        isP1Winner -> "Player 1 wins"
+                        isP2Winner -> "Player 2 wins"
+                        else -> "TIE 🤝"
+                    }
                     isWinner -> "YOU WON 🎉"
                     else -> "OOF 😵"
                 }
 
                 val pillBg = when {
-                    isDraw -> MaterialTheme.colorScheme.surfaceVariant
+                    isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> MaterialTheme.colorScheme.surfaceVariant
                     isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple.copy(alpha = 0.18f) else PlayfulOrange.copy(alpha = 0.18f)
                     isWinner -> PlayfulGreen.copy(alpha = 0.18f)
                     else -> PlayfulOrange.copy(alpha = 0.18f)
                 }
 
                 val pillTextColor = when {
-                    isDraw -> MaterialTheme.colorScheme.onSurfaceVariant
+                    isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> MaterialTheme.colorScheme.onSurfaceVariant
                     isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple else PlayfulOrange
                     isWinner -> PlayfulGreen
                     else -> PlayfulOrange
