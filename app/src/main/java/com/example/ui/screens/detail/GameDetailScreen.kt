@@ -84,6 +84,7 @@ import com.example.ui.components.PlayfulPill
 import com.example.ui.components.bouncyClickable
 import com.example.ui.screens.detail.chess.ChessGameView
 import com.example.ui.screens.detail.dotconnections.DotConnectionsGameView
+import com.example.ui.screens.detail.ludo.LudoGameView
 import com.example.ui.screens.detail.snakesandladders.SnakesAndLaddersGameView
 import com.example.ui.screens.detail.tugofwar.TugOfWarGameView
 import com.example.ui.theme.PlayfulGreen
@@ -117,6 +118,8 @@ fun GameDetailScreen(
     var dotDifficulty by rememberSaveable { mutableStateOf(DotDifficulty.MEDIUM) }
     var dotBoardSize by rememberSaveable { mutableStateOf(DotBoardSize.MEDIUM) }
     var xoDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
+    var ludoPlayerCount by rememberSaveable { mutableIntStateOf(2) }
+    var ludoBotDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
     var targetScore by remember { mutableIntStateOf(game.defaultTargetScore) }
     var isPlaying by rememberSaveable { mutableStateOf(false) }
 
@@ -463,6 +466,10 @@ fun GameDetailScreen(
                 onDotBoardSizeSelected = { dotBoardSize = it },
                 xoDifficulty = xoDifficulty,
                 onXoDifficultySelected = { xoDifficulty = it },
+                ludoPlayerCount = ludoPlayerCount,
+                onLudoPlayerCountSelected = { ludoPlayerCount = it },
+                ludoBotDifficulty = ludoBotDifficulty,
+                onLudoBotDifficultySelected = { ludoBotDifficulty = it },
                 targetScore = targetScore,
                 onTargetScoreSelected = { targetScore = it },
                 onBack = onBack,
@@ -476,6 +483,22 @@ fun GameDetailScreen(
             )
         } else {
             when {
+                game.id.equals("ludo", ignoreCase = true) -> {
+                    LudoGameView(
+                        selectedMode = selectedMode,
+                        playerCount = ludoPlayerCount,
+                        botDifficulty = ludoBotDifficulty,
+                        viewModel = viewModel,
+                        onChangeMode = {
+                            isPlaying = false
+                            multiplayerManager.disconnect()
+                        },
+                        onExit = {
+                            multiplayerManager.disconnect()
+                            onBack()
+                        }
+                    )
+                }
                 game.id.equals("dot_connections", ignoreCase = true) -> {
                     DotConnectionsGameView(
                         selectedMode = selectedMode,
@@ -617,6 +640,7 @@ fun GameDetailScreen(
                 manager = multiplayerManager,
                 targetScore = targetScore,
                 username = settings.username,
+                ludoPlayerCount = ludoPlayerCount,
                 onDismiss = { showNearbyDialog = false },
                 onGameStarted = {
                     showNearbyDialog = false
@@ -663,6 +687,10 @@ private fun CleanLaunchView(
     onDotBoardSizeSelected: (DotBoardSize) -> Unit = {},
     xoDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
     onXoDifficultySelected: (BotDifficulty) -> Unit = {},
+    ludoPlayerCount: Int = 2,
+    onLudoPlayerCountSelected: (Int) -> Unit = {},
+    ludoBotDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
+    onLudoBotDifficultySelected: (BotDifficulty) -> Unit = {},
     targetScore: Int,
     onTargetScoreSelected: (Int) -> Unit,
     onBack: () -> Unit,
@@ -1033,6 +1061,103 @@ private fun CleanLaunchView(
                             ),
                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
                         )
+                    }
+                }
+            }
+        }
+
+        // LUDO: BOT DIFFICULTY (for VS Bot) or PLAYER COUNT (for Local/Nearby)
+        if (game.id.equals("ludo", ignoreCase = true)) {
+            if (selectedMode == GameMode.SOLO) {
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "BOT DIFFICULTY",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    listOf(BotDifficulty.EASY, BotDifficulty.MEDIUM, BotDifficulty.HARD).forEach { diff ->
+                        val isSelected = ludoBotDifficulty == diff
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (isSelected) accentColor else MaterialTheme.colorScheme.surface
+                                )
+                                .border(
+                                    width = if (isSelected) 2.5.dp else 1.5.dp,
+                                    color = if (isSelected) accentColor else colors.border,
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .bouncyClickable { onLudoBotDifficultySelected(diff) }
+                                .testTag("ludo_difficulty_${diff.name.lowercase()}"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = diff.name,
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 0.5.sp
+                                ),
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "PLAYER COUNT",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    listOf(2 to "2 PLAYERS", 3 to "3 PLAYERS", 4 to "4 PLAYERS").forEach { (count, label) ->
+                        val isSelected = ludoPlayerCount == count
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(
+                                    if (isSelected) accentColor else MaterialTheme.colorScheme.surface
+                                )
+                                .border(
+                                    width = if (isSelected) 2.5.dp else 1.5.dp,
+                                    color = if (isSelected) accentColor else colors.border,
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .bouncyClickable { onLudoPlayerCountSelected(count) }
+                                .testTag("ludo_player_count_$count"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 0.5.sp
+                                ),
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
             }

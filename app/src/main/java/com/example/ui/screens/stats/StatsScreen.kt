@@ -266,10 +266,14 @@ private fun PlayfulMatchItem(match: MatchRecord) {
         match.mode.contains("Pass the phone", ignoreCase = true) ||
         match.mode.contains("2 Player", ignoreCase = true)
 
+    val isLudo = match.gameId.equals("ludo", ignoreCase = true) || match.gameTitle.contains("Ludo", ignoreCase = true)
+    val isSolo = match.mode.equals("SOLO", ignoreCase = true) || match.mode.contains("bot", ignoreCase = true)
+
     val isDraw = match.winner.equals("DRAW", ignoreCase = true) ||
         (match.winner == null && match.player1Score == match.player2Score && match.player1Score > 0)
     val isP1Winner = when {
         match.winner.equals("PLAYER_1", ignoreCase = true) -> true
+        match.winner.equals("RED", ignoreCase = true) -> true
         match.winner.equals("PLAYER_2", ignoreCase = true) -> false
         match.winner.equals("DRAW", ignoreCase = true) -> false
         match.player1Score > match.player2Score -> true
@@ -282,7 +286,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
         match.player2Score > match.player1Score -> true
         else -> false
     }
-    val isWinner = match.winner == "PLAYER_1"
+    val isWinner = match.winner == "PLAYER_1" || (isLudo && match.winner.equals("RED", ignoreCase = true))
 
     Box(
         modifier = Modifier
@@ -331,27 +335,52 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.Center
             ) {
+                val winnerUpper = match.winner?.uppercase() ?: ""
                 val pillText = when {
                     isDraw -> "TIE 🤝"
+                    isLudo -> when (winnerUpper) {
+                        "RED" -> if (isSolo) "YOU WON 🎉" else "Red wins 🔴"
+                        "GREEN" -> "Green wins 🟢"
+                        "YELLOW" -> if (isSolo) "Bot Won 🤖" else "Yellow wins 🟡"
+                        "BLUE" -> "Blue wins 🔵"
+                        else -> "COMPLETED 🏁"
+                    }
                     isXo && isLocal2Player -> when {
                         isP1Winner -> "Player 1 wins"
                         isP2Winner -> "Player 2 wins"
                         else -> "TIE 🤝"
                     }
+                    isLocal2Player && isP2Winner -> "Player 2 wins 🎉"
                     isWinner -> "YOU WON 🎉"
                     else -> "OOF 😵"
                 }
 
                 val pillBg = when {
                     isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> MaterialTheme.colorScheme.surfaceVariant
+                    isLudo -> when (winnerUpper) {
+                        "RED" -> Color(0xFFEA4335).copy(alpha = 0.18f)
+                        "GREEN" -> Color(0xFF34A853).copy(alpha = 0.18f)
+                        "YELLOW" -> Color(0xFFFBBC04).copy(alpha = 0.22f)
+                        "BLUE" -> Color(0xFF4285F4).copy(alpha = 0.18f)
+                        else -> PlayfulGreen.copy(alpha = 0.18f)
+                    }
                     isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple.copy(alpha = 0.18f) else PlayfulOrange.copy(alpha = 0.18f)
+                    isLocal2Player && isP2Winner -> PlayfulOrange.copy(alpha = 0.18f)
                     isWinner -> PlayfulGreen.copy(alpha = 0.18f)
                     else -> PlayfulOrange.copy(alpha = 0.18f)
                 }
 
                 val pillTextColor = when {
                     isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> MaterialTheme.colorScheme.onSurfaceVariant
+                    isLudo -> when (winnerUpper) {
+                        "RED" -> Color(0xFFC62828)
+                        "GREEN" -> Color(0xFF2E7D32)
+                        "YELLOW" -> Color(0xFFF57F17)
+                        "BLUE" -> Color(0xFF1565C0)
+                        else -> PlayfulGreen
+                    }
                     isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple else PlayfulOrange
+                    isLocal2Player && isP2Winner -> PlayfulOrange
                     isWinner -> PlayfulGreen
                     else -> PlayfulOrange
                 }

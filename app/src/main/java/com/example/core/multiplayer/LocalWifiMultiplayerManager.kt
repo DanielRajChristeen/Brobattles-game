@@ -93,7 +93,8 @@ class LocalWifiMultiplayerManager(
     fun startHosting(
         gameId: String,
         gameTitle: String,
-        hostName: String = localDeviceName
+        hostName: String = localDeviceName,
+        maxPlayersOverride: Int? = null
     ) {
         disconnect()
 
@@ -108,7 +109,11 @@ class LocalWifiMultiplayerManager(
         }
         hostServerSocket = serverSocket
 
-        val maxPlayers = if (gameId.equals("snakes_and_ladders", ignoreCase = true)) 5 else 2
+        val maxPlayers = maxPlayersOverride ?: when {
+            gameId.equals("snakes_and_ladders", ignoreCase = true) -> 5
+            gameId.equals("ludo", ignoreCase = true) -> 4
+            else -> 2
+        }
 
         val session = DiscoveredSession(
             sessionId = UUID.randomUUID().toString(),

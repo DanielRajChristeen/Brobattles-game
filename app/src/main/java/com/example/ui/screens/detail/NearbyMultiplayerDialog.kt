@@ -66,6 +66,7 @@ fun NearbyMultiplayerDialog(
     manager: LocalWifiMultiplayerManager,
     targetScore: Int = game.defaultTargetScore,
     username: String = manager.localDeviceName,
+    ludoPlayerCount: Int = 4,
     onDismiss: () -> Unit,
     onGameStarted: () -> Unit
 ) {
@@ -75,9 +76,15 @@ fun NearbyMultiplayerDialog(
     var showDirectConnect by remember { mutableStateOf(false) }
 
     // Start appropriate mode when tab changes or initially opens
-    DisposableEffect(selectedTab) {
+    DisposableEffect(selectedTab, ludoPlayerCount) {
         if (selectedTab == 0) {
-            manager.startHosting(gameId = game.id, gameTitle = game.title, hostName = username)
+            val maxOverride = if (game.id.equals("ludo", ignoreCase = true)) ludoPlayerCount else null
+            manager.startHosting(
+                gameId = game.id,
+                gameTitle = game.title,
+                hostName = username,
+                maxPlayersOverride = maxOverride
+            )
         } else {
             manager.startDiscovery()
         }
@@ -408,7 +415,8 @@ private fun HostLobbyContent(
         Spacer(modifier = Modifier.height(14.dp))
 
         val isSnakes = game.id.equals("snakes_and_ladders", ignoreCase = true)
-        val maxPlayers = if (isSnakes) 5 else 2
+        val isLudo = game.id.equals("ludo", ignoreCase = true)
+        val maxPlayers = if (isSnakes) 5 else if (isLudo) 4 else 2
         val canStart = players.size >= 2
 
         Text(
@@ -420,6 +428,7 @@ private fun HostLobbyContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         val snakesEmojis = listOf("🔴", "🟣", "🔵", "🟤", "🟢")
+        val ludoRoles = listOf("HOST • RED 🔴", "PLAYER 2 • GREEN 🟢", "PLAYER 3 • YELLOW 🟡", "PLAYER 4 • BLUE 🔵")
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             players.forEachIndexed { idx, player ->
@@ -432,6 +441,9 @@ private fun HostLobbyContent(
                     isSnakes -> {
                         val token = snakesEmojis.getOrElse(idx) { "🎮" }
                         if (player.isHost) "HOST • Player 1 $token" else "Player ${idx + 1} $token"
+                    }
+                    isLudo -> {
+                        ludoRoles.getOrElse(idx) { "Player ${idx + 1}" }
                     }
                     else -> if (player.isHost) "HOST" else "PLAYER 2"
                 }

@@ -77,12 +77,28 @@ object GameRegistry {
         secondaryAccentHex = 0xFF8B5CF6 // Playful Purple
     )
 
+    val LUDO = GameDefinition(
+        id = "ludo",
+        title = "Ludo",
+        subtitle = "Race to the center!",
+        description = "Roll 1 or 6 to launch tokens! Capture opponents, navigate safe stars, and get all 4 tokens to the center to win.",
+        emoji = "🎲",
+        statusTag = "LET'S GO! 🚀",
+        isAvailable = true,
+        supportedModes = listOf(GameMode.SOLO, GameMode.LOCAL_1V1, GameMode.BLUETOOTH_1V1),
+        targetScoreOptions = emptyList(),
+        defaultTargetScore = 1,
+        accentHex = 0xFFEA4335, // Ludo Red
+        secondaryAccentHex = 0xFF34A853 // Ludo Green
+    )
+
     val games: List<GameDefinition> = listOf(
         XO,
         TUG_OF_WAR,
         SNAKES_AND_LADDERS,
         CHESS,
-        DOT_CONNECTIONS
+        DOT_CONNECTIONS,
+        LUDO
     )
 
     fun getGameById(id: String): GameDefinition? = games.firstOrNull { it.id.equals(id, ignoreCase = true) }
