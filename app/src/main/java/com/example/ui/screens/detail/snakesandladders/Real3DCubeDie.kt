@@ -48,7 +48,10 @@ fun Real3DCubeDie(
     isRolling: Boolean,
     canRoll: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    dieSize: androidx.compose.ui.unit.Dp = 100.dp,
+    accentColor: Color? = null,
+    testTag: String = "snakes_dice_control"
 ) {
     val rollAnim = remember { Animatable(0f) }
 
@@ -73,14 +76,15 @@ fun Real3DCubeDie(
 
     Box(
         modifier = modifier
-            .size(100.dp)
+            .size(dieSize)
             .bouncyClickable(enabled = canRoll, onClick = onClick)
-            .testTag("snakes_dice_control"),
+            .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(100.dp)) {
+        Canvas(modifier = Modifier.size(dieSize)) {
             val cx = size.width / 2f
             val cy = size.height / 2f
+            val sDensity = size.width / 100f
 
             // Animation Timeline Breakdown:
             // 0.00 - 0.10: Morph 2D -> 3D and lift into air
@@ -104,15 +108,15 @@ fun Real3DCubeDie(
             } else if (t < 0.70f) {
                 // Lifted high in the air
                 val liftNorm = sin((t / 0.70f) * PI.toFloat()).coerceAtLeast(0f)
-                elevationPx = (liftNorm * 34f) * density
+                elevationPx = (liftNorm * 34f) * sDensity
                 shadowScale = (1f - liftNorm * 0.35f).coerceIn(0.55f, 1f)
                 shadowAlpha = ((if (isDark) 0.35f else 0.20f) - liftNorm * 0.14f).coerceIn(0.06f, 0.35f)
             } else if (t < 0.84f) {
                 // Contact bounce
                 val bounceFrac = ((t - 0.70f) / 0.14f).coerceIn(0f, 1f)
-                val bounceHeight = sin(bounceFrac * PI.toFloat()) * (10f * density)
+                val bounceHeight = sin(bounceFrac * PI.toFloat()) * (10f * sDensity)
                 elevationPx = bounceHeight
-                shadowScale = (1f - (bounceHeight / (10f * density)) * 0.18f).coerceIn(0.8f, 1f)
+                shadowScale = (1f - (bounceHeight / (10f * sDensity)) * 0.18f).coerceIn(0.8f, 1f)
                 shadowAlpha = if (isDark) 0.36f else 0.20f
             } else {
                 // Transition to 2D: resting flush on table
@@ -124,16 +128,16 @@ fun Real3DCubeDie(
             // Draw soft table contact shadow
             drawOval(
                 color = Color.Black.copy(alpha = shadowAlpha),
-                topLeft = Offset(cx - 36f * density * shadowScale, cy + 24f * density),
-                size = Size(72f * density * shadowScale, 20f * density * shadowScale)
+                topLeft = Offset(cx - 36f * sDensity * shadowScale, cy + 24f * sDensity),
+                size = Size(72f * sDensity * shadowScale, 20f * sDensity * shadowScale)
             )
 
             if (isResting2D) {
                 // ==========================================
                 // CLEAN FLAT 2D RESTING STATE
                 // ==========================================
-                val dieSize = 64f * density
-                val dieCorner = 18f * density
+                val dieSize = 64f * sDensity
+                val dieCorner = 18f * sDensity
                 val dieLeft = cx - dieSize / 2f
                 val dieTop = cy - dieSize / 2f
 
@@ -152,9 +156,9 @@ fun Real3DCubeDie(
                 // 1. Die Body (Clean Crisp Ivory / White)
                 drawPath(path = diePath, color = Color(0xFFFFFFFF))
 
-                // 2. Tactile Bevel Border (Theme Aware, or Emerald Green if canRoll is true)
-                val borderColor = if (canRoll) PlayfulGreen else colors.border
-                val borderWidth = if (canRoll) 2.4f * density else 1.6f * density
+                // 2. Tactile Bevel Border (Theme Aware, or Accent Color if canRoll is true)
+                val borderColor = if (canRoll) (accentColor ?: PlayfulGreen) else colors.border
+                val borderWidth = if (canRoll) 2.4f * sDensity else 1.6f * sDensity
                 drawPath(
                     path = diePath,
                     color = borderColor,
@@ -163,7 +167,7 @@ fun Real3DCubeDie(
 
                 // 3. Crisp Flat 2D Pips
                 val pips = getPipLocalCoords(targetFace)
-                val pipRadius = 4.2f * density
+                val pipRadius = 4.2f * sDensity
                 val pipScale = dieSize * 0.36f
 
                 for (pip in pips) {
@@ -188,7 +192,7 @@ fun Real3DCubeDie(
                 // ==========================================
                 // 3D PERSPECTIVE CUBE & 3D->2D TRANSITION
                 // ==========================================
-                val halfSize = 25f * density
+                val halfSize = 25f * sDensity
                 val vBase = arrayOf(
                     floatArrayOf(-halfSize, -halfSize, -halfSize), // 0
                     floatArrayOf( halfSize, -halfSize, -halfSize), // 1
@@ -215,20 +219,20 @@ fun Real3DCubeDie(
                     rotX = landingPitch * morph
                     rotY = landingYaw * morph
                     rotZ = 0f
-                    camDist = 340f * density
+                    camDist = 340f * sDensity
                 } else if (t < 0.70f) {
                     // Phase 2: Full 3D Tumble
                     val spinT = (1f - (t - 0.10f) / 0.60f)
                     rotX = landingPitch + (spinT * 4f * PI.toFloat())
                     rotY = landingYaw - (spinT * 6f * PI.toFloat())
                     rotZ = sin(((t - 0.10f) / 0.60f) * PI.toFloat()) * 0.7f
-                    camDist = 340f * density
+                    camDist = 340f * sDensity
                 } else if (t < 0.84f) {
                     // Phase 3: Land & Bounce
                     rotX = landingPitch
                     rotY = landingYaw
                     rotZ = 0f
-                    camDist = 340f * density
+                    camDist = 340f * sDensity
                 } else {
                     // Phase 4: 3D -> 2D Smooth Transition
                     val transFrac = ((t - 0.84f) / 0.16f).coerceIn(0f, 1f)
@@ -238,7 +242,7 @@ fun Real3DCubeDie(
                     rotY = landingYaw * (1f - ease)
                     rotZ = 0f
                     // Smoothly transition perspective distance to flat
-                    camDist = (340f + ease * 1200f) * density
+                    camDist = (340f + ease * 1200f) * sDensity
                 }
 
                 fun rotate3D(p: FloatArray): FloatArray {
@@ -342,7 +346,7 @@ fun Real3DCubeDie(
                     drawPath(
                         path = facePath,
                         color = edgeColor,
-                        style = Stroke(width = 1.5f * density, cap = StrokeCap.Round)
+                        style = Stroke(width = 1.5f * sDensity, cap = StrokeCap.Round)
                     )
 
                     // Render attached pips on 3D face
@@ -361,14 +365,14 @@ fun Real3DCubeDie(
                         val pz = (1f - u) * (1f - v) * rawV0[2] + u * (1f - v) * rawV1[2] + u * v * rawV2[2] + (1f - u) * v * rawV3[2]
 
                         val pip3D = rotate3D(floatArrayOf(
-                            px + face.normalBase[0] * 0.4f * density,
-                            py + face.normalBase[1] * 0.4f * density,
-                            pz + face.normalBase[2] * 0.4f * density
+                            px + face.normalBase[0] * 0.4f * sDensity,
+                            py + face.normalBase[1] * 0.4f * sDensity,
+                            pz + face.normalBase[2] * 0.4f * sDensity
                         ))
 
                         val pipProj = project(pip3D)
                         val pipScale = camDist / (camDist + pip3D[2])
-                        val pipRadius = 3.8f * density * pipScale
+                        val pipRadius = 3.8f * sDensity * pipScale
 
                         drawCircle(
                             color = Color(0xFF0F172A),

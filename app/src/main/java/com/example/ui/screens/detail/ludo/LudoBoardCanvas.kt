@@ -12,18 +12,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -37,9 +33,8 @@ import com.example.core.engine.ludo.LudoToken
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
-// Board Colors matching reference image
+// Classic Ludo Board Quadrant Colors
 private val GreenQuadrantColor = Color(0xFF34A853)
 private val YellowQuadrantColor = Color(0xFFFBBC04)
 private val RedQuadrantColor = Color(0xFFEA4335)
@@ -49,10 +44,17 @@ private val CellBorderColor = Color(0xFF222222)
 private val StarColor = Color(0xFF222222)
 private val TrackWhite = Color(0xFFFFFFFF)
 
+/**
+ * Standard 15x15 Ludo Board with high-fidelity 3D shaded pawn puppets,
+ * smooth step-by-step hopping arcs, backward capture animations, and
+ * intelligent multi-token clustering.
+ */
 @Composable
 fun LudoBoardCanvas(
     gameState: LudoGameState,
     selectableTokenIds: List<Int>,
+    animatingToken: AnimatingTokenState? = null,
+    capturedAnimatingTokens: List<AnimatingCapturedState> = emptyList(),
     onTokenSelected: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -72,9 +74,12 @@ fun LudoBoardCanvas(
             .fillMaxWidth()
             .aspectRatio(1.0f)
             .testTag("ludo_board_canvas")
-            .pointerInput(gameState, selectableTokenIds) {
+            .pointerInput(gameState, selectableTokenIds, animatingToken, capturedAnimatingTokens) {
                 detectTapGestures { tapOffset ->
-                    if (selectableTokenIds.isEmpty()) return@detectTapGestures
+                    // Prevent token selection during active animations, when no moves are available, or during bot turn
+                    if (selectableTokenIds.isEmpty() || animatingToken != null || capturedAnimatingTokens.isNotEmpty() || gameState.currentPlayer.isBot) {
+                        return@detectTapGestures
+                    }
                     val cellSize = size.width / 15f
                     val currentP = gameState.currentPlayer
 
@@ -84,14 +89,15 @@ fun LudoBoardCanvas(
 
                     for (tokenId in selectableTokenIds) {
                         val token = currentP.tokens.firstOrNull { it.id == tokenId } ?: continue
-                        val (r, c) = LudoBoardCoordinates.getTokenCoordinate(token)
-                        val tokenCenter = Offset(
-                            x = (c + 0.5f) * cellSize,
-                            y = (r + 0.5f) * cellSize
+                        val tokenCenter = LudoPawnRenderer.getCanvasOffsetForStep(
+                            color = token.color,
+                            tokenId = token.id,
+                            step = token.step,
+                            cellSize = cellSize
                         )
                         val dist = (tapOffset - tokenCenter).getDistance()
-                        // Generous tap target (at least 1.2x cell size for comfortable mobile tapping)
-                        if (dist <= cellSize * 1.2f && dist < minDistance) {
+                        // Generous tap target (at least 1.25x cell size for comfortable mobile touch)
+                        if (dist <= cellSize * 1.25f && dist < minDistance) {
                             minDistance = dist
                             bestTokenId = tokenId
                         }
@@ -170,8 +176,15 @@ fun LudoBoardCanvas(
             style = Stroke(width = 3.5f)
         )
 
-        // 6. Draw Tokens on Board
-        drawAllTokens(gameState, selectableTokenIds, cellSize, pulseScale)
+        // 6. Draw All Pawns (Static, Captured in Reverse, and Actively Hopping)
+        drawBoardPawns(
+            gameState = gameState,
+            selectableTokenIds = selectableTokenIds,
+            animatingToken = animatingToken,
+            capturedAnimatingTokens = capturedAnimatingTokens,
+            cellSize = cellSize,
+            pulseScale = pulseScale
+        )
     }
 }
 
@@ -183,7 +196,6 @@ private fun DrawScope.drawYardQuadrant(
     ludoColor: LudoColor,
     cellSize: Float
 ) {
-    // Quadrant background
     drawRect(
         color = quadrantColor,
         topLeft = Offset(left, top),
@@ -196,13 +208,16 @@ private fun DrawScope.drawYardQuadrant(
         style = Stroke(width = 2.0f)
     )
 
-    // Inner rounded white container
     val innerInset = quadrantSize * 0.16f
-    val innerSize = quadrantSize - (2 * innerInset)
     val innerPath = Path().apply {
         addRoundRect(
             RoundRect(
-                rect = Rect(left + innerInset, top + innerInset, left + quadrantSize - innerInset, top + quadrantSize - innerInset),
+                rect = Rect(
+                    left + innerInset,
+                    top + innerInset,
+                    left + quadrantSize - innerInset,
+                    top + quadrantSize - innerInset
+                ),
                 cornerRadius = CornerRadius(quadrantSize * 0.08f, quadrantSize * 0.08f)
             )
         )
@@ -210,7 +225,6 @@ private fun DrawScope.drawYardQuadrant(
     drawPath(path = innerPath, color = TrackWhite, style = Fill)
     drawPath(path = innerPath, color = CellBorderColor, style = Stroke(width = 2.0f))
 
-    // 4 circular token base slots
     val yardCenters = LudoBoardCoordinates.getYardPositions(ludoColor)
     for (centerPair in yardCenters) {
         val cx = (centerPair.second + 0.5f) * cellSize
@@ -363,133 +377,155 @@ private fun DrawScope.drawStar(
     drawPath(path, color)
 }
 
-private fun DrawScope.drawAllTokens(
+/**
+ * Renders all player pawns with 3D shaded puppets, multi-token clustering,
+ * hopping arcs, and reverse capture trajectories.
+ */
+private fun DrawScope.drawBoardPawns(
     gameState: LudoGameState,
     selectableTokenIds: List<Int>,
+    animatingToken: AnimatingTokenState?,
+    capturedAnimatingTokens: List<AnimatingCapturedState>,
     cellSize: Float,
     pulseScale: Float
 ) {
     val currentP = gameState.currentPlayer
 
-    // Group tokens on the same cell to calculate multi-token stacking offsets
+    // 1. Group static tokens by location for clustering
     val tokensByLocation = mutableMapOf<String, MutableList<Pair<LudoPlayerState, LudoToken>>>()
 
     for (player in gameState.players) {
         for (token in player.tokens) {
-            val key = when {
-                token.isInYard -> "yard_${player.color}_${token.id}"
-                token.isFinished -> "finish_${player.color}"
-                token.isInHomeStretch -> "home_${player.color}_${token.homeStretchIndex}"
-                else -> "track_${token.trackIndex}"
+            // Exclude pawns that are currently actively animating (they are rendered in layer 2 and 3)
+            val isActivelyMoving = animatingToken != null &&
+                    animatingToken.color == player.color &&
+                    animatingToken.tokenId == token.id
+            val isActivelyCaptured = capturedAnimatingTokens.any {
+                it.color == player.color && it.tokenId == token.id
             }
-            tokensByLocation.getOrPut(key) { mutableListOf() }.add(Pair(player, token))
+
+            if (!isActivelyMoving && !isActivelyCaptured) {
+                val key = when {
+                    token.isInYard -> "yard_${player.color}_${token.id}"
+                    token.isFinished -> "finish_${player.color}"
+                    token.isInHomeStretch -> "home_${player.color}_${token.homeStretchIndex}"
+                    else -> "track_${token.trackIndex}"
+                }
+                tokensByLocation.getOrPut(key) { mutableListOf() }.add(Pair(player, token))
+            }
         }
     }
 
-    // Render tokens with offsets
+    // 2. Render all static pawns
     for ((_, tokenGroup) in tokensByLocation) {
         val count = tokenGroup.size
         tokenGroup.forEachIndexed { index, (player, token) ->
-            val (baseR, baseC) = LudoBoardCoordinates.getTokenCoordinate(token)
-            val baseCenter = Offset(
-                x = (baseC + 0.5f) * cellSize,
-                y = (baseR + 0.5f) * cellSize
+            val baseCenter = LudoPawnRenderer.getCanvasOffsetForStep(
+                color = token.color,
+                tokenId = token.id,
+                step = token.step,
+                cellSize = cellSize
             )
 
-            // Calculate clustering offset if multiple tokens share the cell
-            val offset = if (count > 1 && !token.isInYard) {
-                val spread = cellSize * 0.22f
-                when (index) {
-                    0 -> Offset(-spread, -spread)
-                    1 -> Offset(spread, spread)
-                    2 -> Offset(-spread, spread)
-                    3 -> Offset(spread, -spread)
-                    else -> Offset.Zero
-                }
+            val offset = if (!token.isInYard) {
+                LudoPawnRenderer.getMultiTokenOffset(index, count, cellSize)
             } else {
                 Offset.Zero
             }
 
             val finalCenter = baseCenter + offset
-            val isSelectable = player.color == currentP.color && token.id in selectableTokenIds
-            val tokenRadius = if (count > 1 && !token.isInYard) cellSize * 0.30f else cellSize * 0.38f
+            val isSelectable = animatingToken == null &&
+                    capturedAnimatingTokens.isEmpty() &&
+                    player.color == currentP.color &&
+                    token.id in selectableTokenIds
+            val pawnScale = if (count > 1 && !token.isInYard) 0.80f else 0.94f
 
-            drawSingleToken(
+            LudoPawnRenderer.drawLudoPawn(
+                drawScope = this,
                 center = finalCenter,
-                radius = tokenRadius,
-                color = Color(player.color.primaryColorHex),
-                darkColor = Color(player.color.darkColorHex),
-                lightColor = Color(player.color.lightColorHex),
+                cellSize = cellSize,
+                color = player.color,
                 isSelectable = isSelectable,
-                pulseScale = pulseScale
+                pulseScale = pulseScale,
+                liftPx = 0f,
+                scale = pawnScale
             )
         }
     }
-}
 
-private fun DrawScope.drawSingleToken(
-    center: Offset,
-    radius: Float,
-    color: Color,
-    darkColor: Color,
-    lightColor: Color,
-    isSelectable: Boolean,
-    pulseScale: Float
-) {
-    if (isSelectable) {
-        // Pulsing glowing ring around selectable token
-        drawCircle(
-            color = Color.White.copy(alpha = 0.9f),
-            radius = radius * pulseScale,
-            center = center,
-            style = Stroke(width = 3.5f)
-        )
-        drawCircle(
-            color = color.copy(alpha = 0.5f),
-            radius = radius * pulseScale + 3f,
-            center = center,
-            style = Stroke(width = 2.0f)
-        )
+    // 3. Render any pawns actively returning backwards upon capture
+    for (capturedAnim in capturedAnimatingTokens) {
+        val reversePath = capturedAnim.reversePath
+        if (reversePath.size >= 2 && capturedAnim.currentHopIndex < reversePath.size - 1) {
+            val fromStep = reversePath[capturedAnim.currentHopIndex]
+            val toStep = reversePath[capturedAnim.currentHopIndex + 1]
+
+            val fromOffset = LudoPawnRenderer.getCanvasOffsetForStep(
+                color = capturedAnim.color,
+                tokenId = capturedAnim.tokenId,
+                step = fromStep,
+                cellSize = cellSize
+            )
+            val toOffset = LudoPawnRenderer.getCanvasOffsetForStep(
+                color = capturedAnim.color,
+                tokenId = capturedAnim.tokenId,
+                step = toStep,
+                cellSize = cellSize
+            )
+
+            val frac = capturedAnim.hopFraction.coerceIn(0f, 1f)
+            val currentPos = fromOffset + (toOffset - fromOffset) * frac
+            val maxHop = cellSize * 0.38f
+            val liftPx = sin(frac * PI.toFloat()) * maxHop
+
+            LudoPawnRenderer.drawLudoPawn(
+                drawScope = this,
+                center = currentPos,
+                cellSize = cellSize,
+                color = capturedAnim.color,
+                isSelectable = false,
+                pulseScale = 1.0f,
+                liftPx = liftPx,
+                scale = 0.88f
+            )
+        }
     }
 
-    // Drop shadow
-    drawCircle(
-        color = Color.Black.copy(alpha = 0.35f),
-        radius = radius,
-        center = center + Offset(1.5f, 2.5f)
-    )
+    // 4. Render the active forward-hopping pawn (on top of all other elements)
+    if (animatingToken != null) {
+        val path = animatingToken.path
+        if (path.size >= 2 && animatingToken.currentHopIndex < path.size - 1) {
+            val fromStep = path[animatingToken.currentHopIndex]
+            val toStep = path[animatingToken.currentHopIndex + 1]
 
-    // Token Outer Rim / Base
-    drawCircle(
-        color = darkColor,
-        radius = radius,
-        center = center
-    )
+            val fromOffset = LudoPawnRenderer.getCanvasOffsetForStep(
+                color = animatingToken.color,
+                tokenId = animatingToken.tokenId,
+                step = fromStep,
+                cellSize = cellSize
+            )
+            val toOffset = LudoPawnRenderer.getCanvasOffsetForStep(
+                color = animatingToken.color,
+                tokenId = animatingToken.tokenId,
+                step = toStep,
+                cellSize = cellSize
+            )
 
-    // Token Body with 3D Radial-like gradient
-    val bodyRadius = radius * 0.85f
-    drawCircle(
-        brush = Brush.radialGradient(
-            colors = listOf(lightColor, color, darkColor),
-            center = center - Offset(radius * 0.25f, radius * 0.25f),
-            radius = bodyRadius * 1.3f
-        ),
-        radius = bodyRadius,
-        center = center
-    )
+            val frac = animatingToken.hopFraction.coerceIn(0f, 1f)
+            val currentPos = fromOffset + (toOffset - fromOffset) * frac
+            val maxHop = cellSize * 0.46f
+            val liftPx = sin(frac * PI.toFloat()) * maxHop
 
-    // Inner highlight crest
-    drawCircle(
-        color = Color.White.copy(alpha = 0.65f),
-        radius = radius * 0.28f,
-        center = center - Offset(radius * 0.25f, radius * 0.25f)
-    )
-
-    // Dark outline
-    drawCircle(
-        color = CellBorderColor,
-        radius = radius,
-        center = center,
-        style = Stroke(width = 1.5f)
-    )
+            LudoPawnRenderer.drawLudoPawn(
+                drawScope = this,
+                center = currentPos,
+                cellSize = cellSize,
+                color = animatingToken.color,
+                isSelectable = false,
+                pulseScale = 1.0f,
+                liftPx = liftPx,
+                scale = 1.02f // Slightly enlarged during flight for depth
+            )
+        }
+    }
 }

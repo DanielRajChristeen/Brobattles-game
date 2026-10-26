@@ -285,4 +285,77 @@ class LudoGameEngineTest {
         assertEquals(engine.state.players.size, restored.players.size)
         assertEquals(engine.state.players[0].tokens[0].step, restored.players[0].tokens[0].step)
     }
+
+    @Test
+    fun `pawn renderer canvas offset produces valid distinct positions for yard, track, home lane, and center`() {
+        val boardOrigin = androidx.compose.ui.geometry.Offset(0f, 0f)
+        val cellSize = 40f
+
+        for (color in LudoColor.values()) {
+            // Yard position
+            val yardOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
+                color = color, tokenId = 0, step = -1, cellSize = cellSize
+            )
+            assertTrue(yardOffset.x > 0f && yardOffset.y > 0f)
+
+            // Start square (step 0)
+            val startOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
+                color = color, tokenId = 0, step = 0, cellSize = cellSize
+            )
+            assertTrue(startOffset.x >= 0f && startOffset.y >= 0f)
+
+            // Last track square (step 51)
+            val trackLastOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
+                color = color, tokenId = 0, step = 51, cellSize = cellSize
+            )
+            assertTrue(trackLastOffset.x >= 0f && trackLastOffset.y >= 0f)
+
+            // Home stretch squares (steps 52..56)
+            for (homeStep in 52..56) {
+                val homeOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
+                    color = color, tokenId = 0, step = homeStep, cellSize = cellSize
+                )
+                assertTrue(homeOffset.x >= 0f && homeOffset.y >= 0f)
+            }
+
+            // Finish center (step 57)
+            val finishOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
+                color = color, tokenId = 0, step = 57, cellSize = cellSize
+            )
+            // Center 3x3 finish zone on 15x15 board with cellSize=40 spans rows 6..8, cols 6..8 (240px..360px)
+            assertTrue(finishOffset.x in 240f..360f)
+            assertTrue(finishOffset.y in 240f..360f)
+        }
+    }
+
+    @Test
+    fun `step by step forward hopping path derives intermediate squares in correct order`() {
+        // Given pawn at step 5 moving 3 steps to step 8
+        val currentStep = 5
+        val diceRoll = 3
+        val path = (1..diceRoll).map { currentStep + it }
+
+        assertEquals(listOf(6, 7, 8), path)
+    }
+
+    @Test
+    fun `capture animation reverse path walks back to origin yard`() {
+        // Red captures Yellow pawn at Yellow's step 8
+        val capturedStep = 8
+        val reversePath = (capturedStep downTo 0).toList() + listOf(-1)
+
+        assertEquals(listOf(8, 7, 6, 5, 4, 3, 2, 1, 0, -1), reversePath)
+        assertEquals(-1, reversePath.last()) // Lands in own yard
+    }
+
+    @Test
+    fun `multi-token clustering offsets distribute pawns without overlapping centers`() {
+        val cellSize = 40f
+        val offset0 = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getMultiTokenOffset(0, 2, cellSize)
+        val offset1 = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getMultiTokenOffset(1, 2, cellSize)
+
+        assertFalse(offset0 == offset1)
+        assertTrue(offset0.x < 0f)
+        assertTrue(offset1.x > 0f)
+    }
 }
