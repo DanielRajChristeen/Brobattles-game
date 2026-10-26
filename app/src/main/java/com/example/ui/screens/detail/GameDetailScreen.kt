@@ -762,9 +762,13 @@ private fun CleanLaunchView(
         Spacer(modifier = Modifier.height(28.dp))
 
         // Mode Options (clean, no paragraphs of text)
+        val isMultiPlayerGame = game.id.equals("snakes_and_ladders", ignoreCase = true) ||
+                game.id.equals("ludo", ignoreCase = true)
+        val localLabel = if (isMultiPlayerGame) "👥 LOCAL" else "👥 2 PLAYERS"
+
         val modes = listOf(
             GameMode.SOLO to "🤖 VS BOT",
-            GameMode.LOCAL_1V1 to "👥 2 PLAYERS",
+            GameMode.LOCAL_1V1 to localLabel,
             GameMode.BLUETOOTH_1V1 to "📱 NEARBY"
         )
 

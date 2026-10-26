@@ -361,7 +361,7 @@ fun LudoGameView(
                 Text(
                     text = when (selectedMode) {
                         GameMode.SOLO -> "VS Bot (${botDifficulty.name.lowercase().replaceFirstChar { it.uppercase() }})"
-                        GameMode.LOCAL_1V1 -> "Pass & Play (${gameState.players.size}P)"
+                        GameMode.LOCAL_1V1 -> "Local (${gameState.players.size}P)"
                         GameMode.BLUETOOTH_1V1 -> "Nearby (${localColor.displayName})"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
