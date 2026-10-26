@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,12 +60,14 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.audio.XOSoundAndHapticManager
 import com.example.core.bot.TugOfWarBotOpponent
 import com.example.core.engine.GameStatus
 import com.example.core.engine.MoveResult
@@ -106,6 +109,21 @@ fun TugOfWarGameView(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
+    val context = LocalContext.current
+    val soundManager = remember(context) { XOSoundAndHapticManager(context) }
+    DisposableEffect(soundManager) {
+        onDispose {
+            soundManager.release()
+        }
+    }
+
+    // Immediately stop playing sounds if user switches Sound Effects OFF in Settings
+    LaunchedEffect(settings.soundEnabled) {
+        if (!settings.soundEnabled) {
+            soundManager.stopAllSounds()
+        }
+    }
+
     val engine = remember { TugOfWarGameEngine(initialTargetScore = targetScore) }
     val bot = remember { TugOfWarBotOpponent() }
     var gameState by remember { mutableStateOf(engine.state) }
@@ -136,6 +154,7 @@ fun TugOfWarGameView(
     var finishProgress by remember { mutableFloatStateOf(0f) }
     var showResultDialog by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
+    var hasPlayedOutcomeSound by remember { mutableStateOf(false) }
 
     val tapBursts = remember { mutableStateListOf<TapBurst>() }
 
@@ -179,6 +198,7 @@ fun TugOfWarGameView(
 
     // Countdown and tap hint sequence
     LaunchedEffect(gameState.roundNumber) {
+        hasPlayedOutcomeSound = false
         countdown = "3"
         delay(400)
         countdown = "2"
@@ -227,12 +247,24 @@ fun TugOfWarGameView(
         }
     }
 
-    // Trigger finishing choreography when winning threshold is reached
+    // Trigger finishing choreography and outcome audio when winning threshold is reached
     LaunchedEffect(gameState.status) {
         val status = gameState.status
         if ((status is GameStatus.MatchWon || status is GameStatus.RoundWon) && !isFinishingRound) {
             isFinishingRound = true
             showTapHint = false
+
+            // Play outcome sound once per match / round
+            if (!hasPlayedOutcomeSound) {
+                hasPlayedOutcomeSound = true
+                val winner = if (status is GameStatus.MatchWon) status.matchWinner else (status as GameStatus.RoundWon).winner
+                soundManager.onTugOfWarMatchWon(
+                    winner = winner,
+                    localPlayer = localPlayer,
+                    mode = selectedMode,
+                    isSoundEnabled = settings.soundEnabled
+                )
+            }
 
             // Animate finishing progress 0.0 -> 1.0 over 1500ms
             val startTime = System.currentTimeMillis()
@@ -271,6 +303,12 @@ fun TugOfWarGameView(
             gameState = res.newState
             vibrate()
 
+            // Play short, clean touchpad-style tap sound once per accepted user tap
+            // In Nearby mode, only locally initiated taps trigger the tap sound (not remote network echo)
+            if (sendNetwork) {
+                soundManager.playTouchpadTap(settings.soundEnabled)
+            }
+
             // Trigger physical pulling cycle
             if (player == PlayerId.PLAYER_1) {
                 p1PullPhase = 0.05f
@@ -307,6 +345,7 @@ fun TugOfWarGameView(
                         gameState = engine.startRound()
                         isFinishingRound = false
                         finishProgress = 0f
+                        hasPlayedOutcomeSound = false
                         vibrate()
                     }
                     "TUG_REMATCH" -> {
@@ -317,6 +356,7 @@ fun TugOfWarGameView(
                         finishProgress = 0f
                         showResultDialog = false
                         matchRecorded = false
+                        hasPlayedOutcomeSound = false
                         vibrate()
                     }
                 }
@@ -753,6 +793,7 @@ fun TugOfWarGameView(
                     gameState = engine.startRound()
                     isFinishingRound = false
                     finishProgress = 0f
+                    hasPlayedOutcomeSound = false
                     vibrate()
                     if (isNearbyMode) {
                         multiplayerManager.sendAction("TUG_NEXT_ROUND", "")
@@ -776,8 +817,13 @@ fun TugOfWarGameView(
             shape = RoundedCornerShape(26.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             icon = {
+                val iconText = when {
+                    selectedMode == GameMode.SOLO -> if (isP1MatchWinner) "🏆" else "😵"
+                    isNearbyMode -> if (winner == localPlayer) "🏆" else "😵"
+                    else -> "🏆" // In local 2-player mode, both players' victories are celebrated
+                }
                 Text(
-                    text = if (isP1MatchWinner) "🏆" else "😵",
+                    text = iconText,
                     fontSize = 46.sp
                 )
             },
@@ -822,6 +868,7 @@ fun TugOfWarGameView(
                         finishProgress = 0f
                         showResultDialog = false
                         matchRecorded = false
+                        hasPlayedOutcomeSound = false
                         vibrate()
                         if (isNearbyMode) {
                             multiplayerManager.sendAction("TUG_REMATCH", targetScore.toString())

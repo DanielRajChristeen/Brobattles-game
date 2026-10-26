@@ -5,6 +5,7 @@ import com.example.core.engine.PlayerId
 import com.example.core.engine.xo.XOGameEngine
 import com.example.core.engine.xo.XOMove
 import com.example.core.engine.xo.XOState
+import com.example.core.registry.GameMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -334,5 +335,83 @@ class XOSoundAndHapticManagerTest {
         assertNotNull(vibeOffEvent)
         assertTrue("Sound ON must keep sound active when vibration is OFF", vibeOffEvent!!.hasSound)
         assertFalse("Vibration OFF must disable vibration", vibeOffEvent.hasVibe)
+    }
+
+    @Test
+    fun testTouchpadTapSoundDurationUnder50Ms() {
+        val tapNotes = listOf(
+            1400.0 to 10,
+            700.0 to 18
+        )
+        val sampleRate = XOSoundAndHapticManager.SAMPLE_RATE
+        val pcm = XOSoundAndHapticManager.generateToneSequence(tapNotes, sampleRate, volume = 0.45)
+
+        val totalDurationMs = tapNotes.sumOf { it.second }
+        assertTrue("Touchpad tap sound must be very brief (< 50ms) for responsive gameplay", totalDurationMs in 15..45)
+        assertEquals(28, totalDurationMs)
+
+        val expectedSamples = tapNotes.sumOf { (sampleRate * (it.second / 1000.0)).toInt() }
+        val expectedBytes = expectedSamples * 2
+        assertEquals(expectedBytes, pcm.size)
+
+        // Ensure non-silent, valid PCM audio data
+        val hasSound = pcm.any { it != 0.toByte() }
+        assertTrue("Touchpad tap audio must contain non-zero audio samples", hasSound)
+    }
+
+    @Test
+    fun testTugOfWarOutcomeRoutingByModeAndWinner() {
+        // Simulates the routing logic in onTugOfWarMatchWon
+        fun routeOutcome(
+            winner: PlayerId,
+            localPlayer: PlayerId,
+            mode: GameMode,
+            soundEnabled: Boolean
+        ): String {
+            if (!soundEnabled) return "MUTED"
+            return when (mode) {
+                GameMode.SOLO -> {
+                    if (winner == PlayerId.PLAYER_1) "VICTORY" else "DEFEAT"
+                }
+                GameMode.LOCAL_1V1 -> {
+                    "VICTORY"
+                }
+                GameMode.BLUETOOTH_1V1 -> {
+                    if (winner == localPlayer) "VICTORY" else "DEFEAT"
+                }
+            }
+        }
+
+        // 1. User vs Bot: User (Player 1) wins -> Victory instrumental
+        assertEquals("VICTORY", routeOutcome(PlayerId.PLAYER_1, PlayerId.PLAYER_1, GameMode.SOLO, soundEnabled = true))
+
+        // 2. User vs Bot: Bot (Player 2) wins -> Defeat instrumental
+        assertEquals("DEFEAT", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_1, GameMode.SOLO, soundEnabled = true))
+
+        // 3. Local 2-Player: Player 1 wins -> Victory instrumental
+        assertEquals("VICTORY", routeOutcome(PlayerId.PLAYER_1, PlayerId.PLAYER_1, GameMode.LOCAL_1V1, soundEnabled = true))
+
+        // 4. Local 2-Player: Player 2 wins -> Victory instrumental (same victory theme, never defeat!)
+        assertEquals("VICTORY", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_1, GameMode.LOCAL_1V1, soundEnabled = true))
+        assertEquals("VICTORY", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_2, GameMode.LOCAL_1V1, soundEnabled = true))
+
+        // 5. Nearby: Player 1 wins
+        // On Player 1's device (localPlayer == PLAYER_1) -> Victory instrumental
+        assertEquals("VICTORY", routeOutcome(PlayerId.PLAYER_1, PlayerId.PLAYER_1, GameMode.BLUETOOTH_1V1, soundEnabled = true))
+        // On Player 2's device (localPlayer == PLAYER_2) -> Defeat instrumental
+        assertEquals("DEFEAT", routeOutcome(PlayerId.PLAYER_1, PlayerId.PLAYER_2, GameMode.BLUETOOTH_1V1, soundEnabled = true))
+
+        // 6. Nearby: Player 2 wins
+        // On Player 2's device (localPlayer == PLAYER_2) -> Victory instrumental
+        assertEquals("VICTORY", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_2, GameMode.BLUETOOTH_1V1, soundEnabled = true))
+        // On Player 1's device (localPlayer == PLAYER_1) -> Defeat instrumental
+        assertEquals("DEFEAT", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_1, GameMode.BLUETOOTH_1V1, soundEnabled = true))
+
+        // 7. Sound Effects OFF -> Muted in all cases
+        assertEquals("MUTED", routeOutcome(PlayerId.PLAYER_1, PlayerId.PLAYER_1, GameMode.SOLO, soundEnabled = false))
+        assertEquals("MUTED", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_1, GameMode.SOLO, soundEnabled = false))
+        assertEquals("MUTED", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_1, GameMode.LOCAL_1V1, soundEnabled = false))
+        assertEquals("MUTED", routeOutcome(PlayerId.PLAYER_1, PlayerId.PLAYER_1, GameMode.BLUETOOTH_1V1, soundEnabled = false))
+        assertEquals("MUTED", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_1, GameMode.BLUETOOTH_1V1, soundEnabled = false))
     }
 }

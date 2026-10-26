@@ -9,11 +9,12 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import com.example.core.engine.PlayerId
+import com.example.core.registry.GameMode
 import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * Manages electronic audio synthesis and haptic feedback for Tic Tac Toe (XO).
+ * Manages electronic audio synthesis and haptic feedback for Tic Tac Toe (XO) and Tug of War.
  *
  * All audio tones are synthesized natively in-memory via 16-bit PCM AudioTrack,
  * requiring zero network calls, zero external asset dependencies, and minimal memory (<200KB).
@@ -39,6 +40,7 @@ class XOSoundAndHapticManager(private val context: Context) {
     private var roundLostTrack: AudioTrack? = null
     private var matchWonTrack: AudioTrack? = null
     private var matchLostTrack: AudioTrack? = null
+    private var tapTrack: AudioTrack? = null
 
     private var isInitialized = false
 
@@ -165,6 +167,17 @@ class XOSoundAndHapticManager(private val context: Context) {
                 volume = 0.70
             )
             matchLostTrack = buildStaticTrack(matchLostPcm, SAMPLE_RATE)
+
+            // 6. Touchpad-style Tap: Short, clean electronic click (~28 ms, 1400 Hz -> 700 Hz, volume 0.45)
+            val tapPcm = generateToneSequence(
+                listOf(
+                    1400.0 to 10,
+                    700.0 to 18
+                ),
+                SAMPLE_RATE,
+                volume = 0.45
+            )
+            tapTrack = buildStaticTrack(tapPcm, SAMPLE_RATE)
 
             isInitialized = true
         } catch (_: Exception) {
@@ -309,10 +322,69 @@ class XOSoundAndHapticManager(private val context: Context) {
     }
 
     /**
-     * Immediately pauses and mutes all Tic Tac Toe sound effects.
+     * Plays a short, clean electronic touchpad-style click sound (~28 ms) for registered user taps.
+     */
+    fun playTouchpadTap(isSoundEnabled: Boolean) {
+        if (!isSoundEnabled) return
+        play(tapTrack, isSoundEnabled)
+    }
+
+    /**
+     * Plays the victory instrumental without altering vibration settings.
+     */
+    fun playVictory(isSoundEnabled: Boolean) {
+        if (!isSoundEnabled) return
+        stopAllSounds()
+        play(matchWonTrack, isSoundEnabled)
+    }
+
+    /**
+     * Plays the defeat instrumental without altering vibration settings.
+     */
+    fun playDefeat(isSoundEnabled: Boolean) {
+        if (!isSoundEnabled) return
+        stopAllSounds()
+        play(matchLostTrack, isSoundEnabled)
+    }
+
+    /**
+     * Dispatches the correct victory / defeat instrumental for Tug of War based on game mode and player identity:
+     * - In User vs Bot (SOLO): User win plays victory instrumental, bot win plays defeat instrumental.
+     * - In 2-Player Local (LOCAL_1V1): Both Player 1 and Player 2 wins play the victory instrumental.
+     * - In Nearby multiplayer (BLUETOOTH_1V1): Device-specific perspective (local player win -> victory, loss -> defeat).
+     */
+    fun onTugOfWarMatchWon(
+        winner: PlayerId,
+        localPlayer: PlayerId,
+        mode: GameMode,
+        isSoundEnabled: Boolean
+    ) {
+        when (mode) {
+            GameMode.SOLO -> {
+                if (winner == PlayerId.PLAYER_1) {
+                    playVictory(isSoundEnabled)
+                } else {
+                    playDefeat(isSoundEnabled)
+                }
+            }
+            GameMode.LOCAL_1V1 -> {
+                playVictory(isSoundEnabled)
+            }
+            GameMode.BLUETOOTH_1V1 -> {
+                if (winner == localPlayer) {
+                    playVictory(isSoundEnabled)
+                } else {
+                    playDefeat(isSoundEnabled)
+                }
+            }
+        }
+    }
+
+    /**
+     * Immediately pauses and mutes all sound effects.
      */
     fun stopAllSounds() {
-        listOf(beepTrack, roundWonTrack, roundLostTrack, matchWonTrack, matchLostTrack).forEach { track ->
+        listOf(beepTrack, roundWonTrack, roundLostTrack, matchWonTrack, matchLostTrack, tapTrack).forEach { track ->
             try {
                 if (track?.state == AudioTrack.STATE_INITIALIZED) {
                     track.pause()
@@ -353,7 +425,7 @@ class XOSoundAndHapticManager(private val context: Context) {
      */
     fun release() {
         stopAll()
-        listOf(beepTrack, roundWonTrack, roundLostTrack, matchWonTrack, matchLostTrack).forEach { track ->
+        listOf(beepTrack, roundWonTrack, roundLostTrack, matchWonTrack, matchLostTrack, tapTrack).forEach { track ->
             try {
                 track?.release()
             } catch (_: Exception) {}
@@ -363,6 +435,7 @@ class XOSoundAndHapticManager(private val context: Context) {
         roundLostTrack = null
         matchWonTrack = null
         matchLostTrack = null
+        tapTrack = null
         isInitialized = false
     }
 }

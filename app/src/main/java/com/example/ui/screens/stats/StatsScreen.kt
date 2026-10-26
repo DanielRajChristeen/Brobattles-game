@@ -274,6 +274,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
 
     val isLudo = match.gameId.equals("ludo", ignoreCase = true) || match.gameTitle.contains("Ludo", ignoreCase = true)
     val isSnakes = match.gameId.equals("snakes_and_ladders", ignoreCase = true) || match.gameTitle.contains("Snakes", ignoreCase = true)
+    val isTug = match.gameId.equals("tug_of_war", ignoreCase = true) || match.gameTitle.contains("Tug of War", ignoreCase = true)
     val isSolo = match.mode.equals("SOLO", ignoreCase = true) || match.mode.contains("bot", ignoreCase = true)
 
     val isDraw = match.winner.equals("DRAW", ignoreCase = true) ||
@@ -384,6 +385,14 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                         isP2Winner -> "Player 2 wins"
                         else -> "TIE 🤝"
                     }
+                    isTug && isLocal2Player -> when {
+                        isP1Winner -> "Player 1 wins 🎉"
+                        isP2Winner -> "Player 2 wins 🎉"
+                        else -> "TIE 🤝"
+                    }
+                    isTug && isSolo -> {
+                        if (isP1Winner) "YOU WON 🎉" else "Bot Won 🤖"
+                    }
                     isLocal2Player && isP2Winner -> "Player 2 wins 🎉"
                     isWinner -> "YOU WON 🎉"
                     else -> "OOF 😵"
@@ -400,6 +409,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                         else -> PlayfulGreen.copy(alpha = 0.18f)
                     }
                     isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple.copy(alpha = 0.18f) else PlayfulOrange.copy(alpha = 0.18f)
+                    isTug && isLocal2Player -> if (isP1Winner) PlayfulOrange.copy(alpha = 0.18f) else PlayfulPurple.copy(alpha = 0.18f)
                     isLocal2Player && isP2Winner -> PlayfulOrange.copy(alpha = 0.18f)
                     isWinner -> PlayfulGreen.copy(alpha = 0.18f)
                     else -> PlayfulOrange.copy(alpha = 0.18f)
@@ -416,6 +426,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                         else -> PlayfulGreen
                     }
                     isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple else PlayfulOrange
+                    isTug && isLocal2Player -> if (isP1Winner) PlayfulOrange else PlayfulPurple
                     isLocal2Player && isP2Winner -> PlayfulOrange
                     isWinner -> PlayfulGreen
                     else -> PlayfulOrange

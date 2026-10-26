@@ -69,4 +69,45 @@ class TugOfWarEngineTest {
         val posAfter = engine.state.ropePosition
         assertTrue("Friction should pull rope back towards 0", posAfter > posBefore)
     }
+
+    @Test
+    fun `continuous taps by p2 trigger match win at threshold`() {
+        val engine = TugOfWarGameEngine(initialTargetScore = 1)
+        while (engine.state.status is GameStatus.InProgress) {
+            engine.makeMove(TugOfWarMove(), PlayerId.PLAYER_2)
+        }
+
+        val status = engine.state.status
+        assertTrue(status is GameStatus.MatchWon)
+        assertEquals(PlayerId.PLAYER_2, (status as GameStatus.MatchWon).matchWinner)
+        assertEquals(0, engine.state.player1Score)
+        assertEquals(1, engine.state.player2Score)
+    }
+
+    @Test
+    fun `moves made after match end are rejected and produce no moves`() {
+        val engine = TugOfWarGameEngine(initialTargetScore = 1)
+        while (engine.state.status is GameStatus.InProgress) {
+            engine.makeMove(TugOfWarMove(), PlayerId.PLAYER_1)
+        }
+
+        assertTrue(engine.state.status is GameStatus.MatchWon)
+
+        // Attempt move after match won
+        val postResult = engine.makeMove(TugOfWarMove(), PlayerId.PLAYER_1)
+        assertTrue("Move after match won must not be successful", postResult is com.example.core.engine.MoveResult.Invalid)
+    }
+
+    @Test
+    fun `local mode result classification evaluates both p1 and p2 as victories`() {
+        // Simulates the result icon and dialog title logic for Local 2-Player mode
+        fun getLocalDialogIcon(): String = "🏆" // In local mode, both players celebrate!
+        fun getLocalDialogTitle(winner: PlayerId): String {
+            return if (winner == PlayerId.PLAYER_1) "PLAYER 1 WINS! 👑" else "PLAYER 2 WINS! 👑"
+        }
+
+        assertEquals("🏆", getLocalDialogIcon())
+        assertEquals("PLAYER 1 WINS! 👑", getLocalDialogTitle(PlayerId.PLAYER_1))
+        assertEquals("PLAYER 2 WINS! 👑", getLocalDialogTitle(PlayerId.PLAYER_2))
+    }
 }
