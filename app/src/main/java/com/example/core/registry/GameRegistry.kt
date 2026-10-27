@@ -92,11 +92,27 @@ object GameRegistry {
         secondaryAccentHex = 0xFF34A853 // Ludo Green
     )
 
+    val CHECKERS = GameDefinition(
+        id = "checkers",
+        title = "Checkers",
+        subtitle = "Jump & conquer!",
+        description = "Classic Draughts with mandatory captures, multi-jumps, king promotions, and clever traps!",
+        emoji = "🏁",
+        statusTag = "LET'S GO! 🚀",
+        isAvailable = true,
+        supportedModes = listOf(GameMode.SOLO, GameMode.LOCAL_1V1, GameMode.BLUETOOTH_1V1),
+        targetScoreOptions = emptyList(),
+        defaultTargetScore = 1,
+        accentHex = 0xFFDC2626, // Crimson Red
+        secondaryAccentHex = 0xFF1E293B // Slate Black
+    )
+
     val games: List<GameDefinition> = listOf(
         XO,
         TUG_OF_WAR,
         SNAKES_AND_LADDERS,
         CHESS,
+        CHECKERS,
         DOT_CONNECTIONS,
         LUDO
     )

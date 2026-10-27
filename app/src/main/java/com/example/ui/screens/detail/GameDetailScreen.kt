@@ -82,6 +82,8 @@ import com.example.ui.MainViewModel
 import com.example.ui.components.ChunkyButton
 import com.example.ui.components.PlayfulPill
 import com.example.ui.components.bouncyClickable
+import com.example.core.engine.checkers.CheckersDifficulty
+import com.example.ui.screens.detail.checkers.CheckersGameView
 import com.example.ui.screens.detail.chess.ChessGameView
 import com.example.ui.screens.detail.dotconnections.DotConnectionsGameView
 import com.example.ui.screens.detail.ludo.LudoGameView
@@ -115,6 +117,7 @@ fun GameDetailScreen(
     var selectedMode by remember { mutableStateOf(GameMode.SOLO) }
     var chessDifficulty by remember { mutableStateOf(ChessDifficulty.MEDIUM) }
     var chessPlayerColor by remember { mutableStateOf(ChessPlayerColor.AUTO) }
+    var checkersDifficulty by rememberSaveable { mutableStateOf(CheckersDifficulty.MEDIUM) }
     var dotDifficulty by rememberSaveable { mutableStateOf(DotDifficulty.MEDIUM) }
     var dotBoardSize by rememberSaveable { mutableStateOf(DotBoardSize.MEDIUM) }
     var xoDifficulty by rememberSaveable { mutableStateOf(BotDifficulty.MEDIUM) }
@@ -461,6 +464,8 @@ fun GameDetailScreen(
                 onChessDifficultySelected = { chessDifficulty = it },
                 chessPlayerColor = chessPlayerColor,
                 onChessPlayerColorSelected = { chessPlayerColor = it },
+                checkersDifficulty = checkersDifficulty,
+                onCheckersDifficultySelected = { checkersDifficulty = it },
                 dotDifficulty = dotDifficulty,
                 onDotDifficultySelected = { dotDifficulty = it },
                 dotBoardSize = dotBoardSize,
@@ -486,6 +491,21 @@ fun GameDetailScreen(
             )
         } else {
             when {
+                game.id.equals("checkers", ignoreCase = true) -> {
+                    CheckersGameView(
+                        selectedMode = selectedMode,
+                        difficulty = checkersDifficulty,
+                        viewModel = viewModel,
+                        onChangeMode = {
+                            isPlaying = false
+                            multiplayerManager.disconnect()
+                        },
+                        onExit = {
+                            multiplayerManager.disconnect()
+                            onBack()
+                        }
+                    )
+                }
                 game.id.equals("ludo", ignoreCase = true) -> {
                     LudoGameView(
                         selectedMode = selectedMode,
@@ -685,6 +705,8 @@ private fun CleanLaunchView(
     onChessDifficultySelected: (ChessDifficulty) -> Unit = {},
     chessPlayerColor: ChessPlayerColor = ChessPlayerColor.AUTO,
     onChessPlayerColorSelected: (ChessPlayerColor) -> Unit = {},
+    checkersDifficulty: CheckersDifficulty = CheckersDifficulty.MEDIUM,
+    onCheckersDifficultySelected: (CheckersDifficulty) -> Unit = {},
     dotDifficulty: DotDifficulty = DotDifficulty.MEDIUM,
     onDotDifficultySelected: (DotDifficulty) -> Unit = {},
     dotBoardSize: DotBoardSize = DotBoardSize.MEDIUM,
@@ -913,6 +935,55 @@ private fun CleanLaunchView(
                     ) {
                         Text(
                             text = label,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.5.sp
+                            ),
+                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+
+        // CHECKERS: BOT DIFFICULTY ONLY when VS BOT is selected
+        if (game.id.equals("checkers", ignoreCase = true) && selectedMode == GameMode.SOLO) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "BOT DIFFICULTY",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp
+                ),
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                listOf(CheckersDifficulty.EASY, CheckersDifficulty.MEDIUM, CheckersDifficulty.HARD).forEach { diff ->
+                    val isSelected = checkersDifficulty == diff
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (isSelected) accentColor else MaterialTheme.colorScheme.surface
+                            )
+                            .border(
+                                width = if (isSelected) 2.5.dp else 1.5.dp,
+                                color = if (isSelected) accentColor else colors.border,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            .bouncyClickable { onCheckersDifficultySelected(diff) }
+                            .testTag("checkers_difficulty_${diff.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = diff.title,
                             style = MaterialTheme.typography.titleSmall.copy(
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 0.5.sp
