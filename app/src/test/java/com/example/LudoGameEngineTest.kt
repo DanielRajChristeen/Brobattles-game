@@ -26,7 +26,7 @@ class LudoGameEngineTest {
 
     @Test
     fun `initial state has 4 tokens in yard for all players`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 4)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 4)
         val state = engine.state
 
         assertEquals(4, state.players.size)
@@ -46,7 +46,7 @@ class LudoGameEngineTest {
 
     @Test
     fun `rolling 2, 3, 4, 5 with all tokens in yard gives no legal moves and passes turn`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
         // Player 1 rolls 3
         engine.rollDice(forcedValue = 3)
@@ -62,7 +62,7 @@ class LudoGameEngineTest {
 
     @Test
     fun `rolling 1 releases token from yard to start cell and grants extra turn`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
         // Player 1 (Red) rolls 1
         engine.rollDice(forcedValue = 1)
@@ -90,28 +90,60 @@ class LudoGameEngineTest {
     }
 
     @Test
-    fun `rolling 6 releases token from yard to start cell and grants extra turn`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+    fun `rolling 6 with all soldiers in castle does not release soldier and passes turn`() {
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
-        // Player 1 (Red) rolls 6
+        // Player 1 (Red) rolls 6 with all soldiers in castle
         engine.rollDice(forcedValue = 6)
-        engine.moveToken(1)
         val state = engine.state
 
-        val redToken1 = state.players[0].tokens[1]
-        assertEquals(0, redToken1.step)
-        assertTrue(redToken1.isOnTrack)
-        assertEquals(0, state.currentTurnIndex)
+        // No soldiers can be selected or released on a 6 from castle
+        assertTrue(state.selectableTokenIds.isEmpty())
+        assertTrue(state.players[0].tokens.all { it.isInYard })
+
+        // Turn resolves correctly under existing rules (passes to Player 2)
+        assertEquals(1, state.currentTurnIndex)
+        assertEquals(LudoColor.GREEN, state.currentPlayer.color)
         assertTrue(state.canRoll)
-        assertTrue(state.extraTurn)
+    }
+
+    @Test
+    fun `soldier already on track advances on a roll of 6 and grants extra turn`() {
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
+
+        // Roll 1 to release soldier 0 to step 0
+        engine.rollDice(forcedValue = 1)
+        engine.moveToken(0)
+
+        // Red has extra turn from rolling 1. Now rolls 6!
+        engine.rollDice(forcedValue = 6)
+        val rolledState = engine.state
+
+        // Soldier 0 is on the track so it IS selectable with a 6
+        assertTrue(rolledState.selectableTokenIds.contains(0))
+        // Castle soldiers (1, 2, 3) must NOT be selectable on a 6!
+        assertFalse(rolledState.selectableTokenIds.contains(1))
+        assertFalse(rolledState.selectableTokenIds.contains(2))
+        assertFalse(rolledState.selectableTokenIds.contains(3))
+
+        // Move soldier 0 by 6 steps
+        engine.moveToken(0)
+        val movedState = engine.state
+
+        // Soldier 0 is now at step 0 + 6 = 6
+        assertEquals(6, movedState.players[0].tokens[0].step)
+        // Rolling 6 grants an extra turn!
+        assertEquals(0, movedState.currentTurnIndex)
+        assertTrue(movedState.canRoll)
+        assertTrue(movedState.extraTurn)
     }
 
     @Test
     fun `token on track advances by dice roll amount`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
-        // Roll 6 and release token 0 to step 0
-        engine.rollDice(forcedValue = 6)
+        // Roll 1 and release token 0 to step 0
+        engine.rollDice(forcedValue = 1)
         engine.moveToken(0)
 
         // Red has extra turn, rolls 4
@@ -131,32 +163,32 @@ class LudoGameEngineTest {
 
     @Test
     fun `exact roll required to enter center finish`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
-        // Setup token 0 at step 55 (2 steps away from finish at 57)
+        // Setup soldier 0 at step 54 (2 steps away from finish at 56)
         val currentP = engine.state.players[0]
-        val updatedTokens = currentP.tokens.map { if (it.id == 0) it.copy(step = 55) else it }
+        val updatedTokens = currentP.tokens.map { if (it.id == 0) it.copy(step = 54) else it }
         val updatedPlayers = engine.state.players.map { if (it.color == LudoColor.RED) it.copy(tokens = updatedTokens) else it }
         engine.setState(engine.state.copy(players = updatedPlayers))
 
-        // Rolling 3 is an overshoot (55 + 3 = 58 > 57) -> illegal for token 0!
+        // Rolling 3 is an overshoot (54 + 3 = 57 > 56) -> illegal for soldier 0!
         engine.rollDice(forcedValue = 3)
         assertFalse(engine.state.selectableTokenIds.contains(0))
 
-        // Reset to Red turn and roll 2 -> exactly 55 + 2 = 57 (legal!)
+        // Reset to Red turn and roll 2 -> exactly 54 + 2 = 56 (legal!)
         engine.setState(engine.state.copy(currentTurnIndex = 0, canRoll = true, diceRoll = null, selectableTokenIds = emptyList()))
         engine.rollDice(forcedValue = 2)
         assertTrue(engine.state.selectableTokenIds.contains(0))
 
         engine.moveToken(0)
         val finishedToken = engine.state.players[0].tokens[0]
-        assertEquals(57, finishedToken.step)
+        assertEquals(56, finishedToken.step)
         assertTrue(finishedToken.isFinished)
     }
 
     @Test
     fun `capturing enemy token sends enemy to yard and grants extra turn`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
         // Place Green token 0 at outer track index 5 (step 5 - 13 + 52) % 52 = 44 for Green
         // Track index 5 is not safe!
@@ -192,7 +224,7 @@ class LudoGameEngineTest {
 
     @Test
     fun `safe track cells protect tokens from capture`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
         // Star safe square at track index 8
         assertTrue(LudoBoardCoordinates.isSafeSquare(8))
@@ -223,14 +255,14 @@ class LudoGameEngineTest {
 
     @Test
     fun `all 4 tokens finished triggers match win`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 2)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 2)
 
-        // Setup Red with 3 finished tokens and token 3 at step 56 (needs 1 to finish)
+        // Setup Red with 3 finished soldiers and soldier 3 at step 55 (needs 1 to finish at 56)
         val redTokens = listOf(
-            LudoToken(0, LudoColor.RED, step = 57),
-            LudoToken(1, LudoColor.RED, step = 57),
-            LudoToken(2, LudoColor.RED, step = 57),
-            LudoToken(3, LudoColor.RED, step = 56)
+            LudoToken(0, LudoColor.RED, step = 56),
+            LudoToken(1, LudoColor.RED, step = 56),
+            LudoToken(2, LudoColor.RED, step = 56),
+            LudoToken(3, LudoColor.RED, step = 55)
         )
         val updatedP1 = engine.state.players[0].copy(tokens = redTokens)
         engine.setState(engine.state.copy(players = listOf(updatedP1, engine.state.players[1]), currentTurnIndex = 0, canRoll = true))
@@ -250,10 +282,10 @@ class LudoGameEngineTest {
     fun `bot opponent prioritizes winning move`() {
         val bot = LudoBotOpponent()
         val yellowTokens = listOf(
-            LudoToken(0, LudoColor.YELLOW, step = 57),
-            LudoToken(1, LudoColor.YELLOW, step = 57),
-            LudoToken(2, LudoColor.YELLOW, step = 57),
-            LudoToken(3, LudoColor.YELLOW, step = 55) // roll of 2 wins!
+            LudoToken(0, LudoColor.YELLOW, step = 56),
+            LudoToken(1, LudoColor.YELLOW, step = 56),
+            LudoToken(2, LudoColor.YELLOW, step = 56),
+            LudoToken(3, LudoColor.YELLOW, step = 54) // roll of 2 wins!
         )
         val yellowPlayer = LudoPlayerState(LudoColor.YELLOW, "Bot", isBot = true, tokens = yellowTokens)
         val state = com.example.core.engine.ludo.LudoGameState(
@@ -271,8 +303,8 @@ class LudoGameEngineTest {
 
     @Test
     fun `serialization and deserialization roundtrip preserves full state`() {
-        val engine = LudoGameEngine(GameMode.LOCAL_1V1, playerCount = 3)
-        engine.rollDice(forcedValue = 6)
+        val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 3)
+        engine.rollDice(forcedValue = 1)
         engine.moveToken(0)
 
         val json = serializeLudoState(engine.state)
@@ -304,23 +336,23 @@ class LudoGameEngineTest {
             )
             assertTrue(startOffset.x >= 0f && startOffset.y >= 0f)
 
-            // Last track square (step 51)
+            // Last track square (step 50)
             val trackLastOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
-                color = color, tokenId = 0, step = 51, cellSize = cellSize
+                color = color, tokenId = 0, step = 50, cellSize = cellSize
             )
             assertTrue(trackLastOffset.x >= 0f && trackLastOffset.y >= 0f)
 
-            // Home stretch squares (steps 52..56)
-            for (homeStep in 52..56) {
+            // Home stretch squares (steps 51..55)
+            for (homeStep in 51..55) {
                 val homeOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
                     color = color, tokenId = 0, step = homeStep, cellSize = cellSize
                 )
                 assertTrue(homeOffset.x >= 0f && homeOffset.y >= 0f)
             }
 
-            // Finish center (step 57)
+            // Finish center (step 56)
             val finishOffset = com.example.ui.screens.detail.ludo.LudoPawnRenderer.getCanvasOffsetForStep(
-                color = color, tokenId = 0, step = 57, cellSize = cellSize
+                color = color, tokenId = 0, step = 56, cellSize = cellSize
             )
             // Center 3x3 finish zone on 15x15 board with cellSize=40 spans rows 6..8, cols 6..8 (240px..360px)
             assertTrue(finishOffset.x in 240f..360f)
@@ -358,4 +390,101 @@ class LudoGameEngineTest {
         assertTrue(offset0.x < 0f)
         assertTrue(offset1.x > 0f)
     }
+
+    @Test
+    fun `home-lane entry moves directly from step 50 to colored home stretch without touching corner cell`() {
+        // Red home entry: track index 50 is (14, 7). Home stretch step 51 is (13, 7).
+        // Must never touch corner (14, 6)!
+        val redLastTrackCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.RED, step = 50))
+        assertEquals(14f, redLastTrackCoord.first)
+        assertEquals(7f, redLastTrackCoord.second)
+        val redFirstHomeCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.RED, step = 51))
+        assertEquals(13f, redFirstHomeCoord.first)
+        assertEquals(7f, redFirstHomeCoord.second)
+
+        // Green home entry: track index 11 is (7, 0). Home stretch step 51 is (7, 1).
+        // Must never touch corner (6, 0)!
+        val greenLastTrackCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.GREEN, step = 50))
+        assertEquals(7f, greenLastTrackCoord.first)
+        assertEquals(0f, greenLastTrackCoord.second)
+        val greenFirstHomeCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.GREEN, step = 51))
+        assertEquals(7f, greenFirstHomeCoord.first)
+        assertEquals(1f, greenFirstHomeCoord.second)
+
+        // Yellow home entry: track index 24 is (0, 7). Home stretch step 51 is (1, 7).
+        // Must never touch corner (0, 8)!
+        val yellowLastTrackCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.YELLOW, step = 50))
+        assertEquals(0f, yellowLastTrackCoord.first)
+        assertEquals(7f, yellowLastTrackCoord.second)
+        val yellowFirstHomeCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.YELLOW, step = 51))
+        assertEquals(1f, yellowFirstHomeCoord.first)
+        assertEquals(7f, yellowFirstHomeCoord.second)
+
+        // Blue home entry: track index 37 is (7, 14). Home stretch step 51 is (7, 13).
+        // Must never touch corner (8, 14)!
+        val blueLastTrackCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.BLUE, step = 50))
+        assertEquals(7f, blueLastTrackCoord.first)
+        assertEquals(14f, blueLastTrackCoord.second)
+        val blueFirstHomeCoord = LudoBoardCoordinates.getTokenCoordinate(LudoToken(0, LudoColor.BLUE, step = 51))
+        assertEquals(7f, blueFirstHomeCoord.first)
+        assertEquals(13f, blueFirstHomeCoord.second)
+    }
+
+
+    @Test
+    fun `rolling 2, 3, 4, 5, or 6 does not permit a soldier to leave castle for any player`() {
+        for (roll in listOf(2, 3, 4, 5, 6)) {
+            val engine = LudoGameEngine(GameMode.LOCAL_1V1, initialPlayerCount = 4)
+            // Roll for Red
+            engine.rollDice(forcedValue = roll)
+            assertTrue("Roll $roll should not allow any castle soldier to move", engine.state.selectableTokenIds.isEmpty())
+            assertTrue(engine.state.players[0].tokens.all { it.isInYard })
+            // Turn should have advanced to player 2 (Green)
+            assertEquals(1, engine.state.currentTurnIndex)
+        }
+    }
+
+    @Test
+    fun `bot opponent in VS Bot mode cannot release soldiers on 6 and only releases on 1`() {
+        val bot = LudoBotOpponent()
+        // Bot state where all 4 Yellow soldiers are in yard
+        val yellowPlayer = LudoPlayerState(
+            LudoColor.YELLOW,
+            "Bot",
+            isBot = true,
+            tokens = (0..3).map { LudoToken(it, LudoColor.YELLOW, step = LudoToken.STEP_YARD) }
+        )
+        val redPlayer = LudoPlayerState(
+            LudoColor.RED,
+            "Player",
+            isBot = false,
+            tokens = (0..3).map { LudoToken(it, LudoColor.RED, step = LudoToken.STEP_YARD) }
+        )
+
+        // Case 1: Roll 6 -> selectableTokenIds is empty
+        val stateRoll6 = com.example.core.engine.ludo.LudoGameState(
+            mode = GameMode.SOLO,
+            players = listOf(redPlayer, yellowPlayer),
+            currentTurnIndex = 1,
+            diceRoll = 6,
+            canRoll = false,
+            selectableTokenIds = emptyList()
+        )
+        val move6 = bot.decideMove(stateRoll6, BotDifficulty.HARD)
+        assertNull("Bot must not attempt any move on roll 6 when all soldiers are in castle", move6)
+
+        // Case 2: Roll 1 -> selectableTokenIds has all 4 yard soldiers
+        val stateRoll1 = com.example.core.engine.ludo.LudoGameState(
+            mode = GameMode.SOLO,
+            players = listOf(redPlayer, yellowPlayer),
+            currentTurnIndex = 1,
+            diceRoll = 1,
+            canRoll = false,
+            selectableTokenIds = listOf(0, 1, 2, 3)
+        )
+        val move1 = bot.decideMove(stateRoll1, BotDifficulty.HARD)
+        assertNotNull("Bot must select a soldier to release on roll 1", move1)
+        assertTrue(move1 in 0..3)
+    }
+
 }

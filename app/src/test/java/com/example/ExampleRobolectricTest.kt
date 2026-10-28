@@ -49,6 +49,7 @@ class ExampleRobolectricTest {
     val xo = GameRegistry.getGameById("xo")
     assertNotNull(xo)
     assertTrue(xo!!.isAvailable)
+    assertEquals(R.drawable.ic_game_xo, xo.imageRes)
 
     val tug = GameRegistry.getGameById("tug_of_war")
     assertNotNull(tug)

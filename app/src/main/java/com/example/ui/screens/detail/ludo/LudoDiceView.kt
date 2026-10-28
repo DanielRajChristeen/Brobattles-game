@@ -92,7 +92,7 @@ fun LudoDiceView(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = if (isRolling) "ROLLING... 🎲" else if (canRoll) "ROLL DICE 🎲" else "PICK TOKEN",
+                text = if (isRolling) "ROLLING... 🎲" else if (canRoll) "ROLL DICE 🎲" else "PICK SOLDIER",
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Black,
                     letterSpacing = 0.5.sp

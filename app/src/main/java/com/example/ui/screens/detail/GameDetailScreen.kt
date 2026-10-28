@@ -9,8 +9,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.scaleIn
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -758,11 +760,22 @@ private fun CleanLaunchView(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                text = game.emoji,
-                fontSize = 44.sp,
-                modifier = Modifier.padding(end = 14.dp)
-            )
+            if (game.imageRes != null) {
+                Image(
+                    painter = painterResource(id = game.imageRes),
+                    contentDescription = game.title,
+                    modifier = Modifier
+                        .padding(end = 14.dp)
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                )
+            } else {
+                Text(
+                    text = game.emoji,
+                    fontSize = 44.sp,
+                    modifier = Modifier.padding(end = 14.dp)
+                )
+            }
             Column {
                 Text(
                     text = game.title,

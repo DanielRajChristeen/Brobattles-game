@@ -14,5 +14,6 @@ data class GameDefinition(
     val accentHex: Long = 0xFF8B5CF6,
     val secondaryAccentHex: Long = 0xFFEC4899,
     val minPlayers: Int = 2,
-    val maxPlayers: Int = 2
+    val maxPlayers: Int = 2,
+    val imageRes: Int? = null
 )

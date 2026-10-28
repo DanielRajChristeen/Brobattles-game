@@ -126,7 +126,7 @@ object LudoBoardCoordinates {
     fun isSafeSquare(trackIndex: Int): Boolean = trackIndex in SAFE_TRACK_INDICES
 
     /**
-     * Calculates the (row, col) grid coordinate for a token.
+     * Calculates the (row, col) grid coordinate for a soldier.
      */
     fun getTokenCoordinate(token: LudoToken): Pair<Float, Float> {
         return when {
@@ -137,7 +137,7 @@ object LudoBoardCoordinates {
                 Pair(r.toFloat(), c.toFloat())
             }
             token.isInHomeStretch -> {
-                val stretchIdx = token.step - 52
+                val stretchIdx = token.step - LudoToken.STEP_FIRST_HOME_STRETCH
                 val (r, c) = getHomeStretch(token.color)[stretchIdx]
                 Pair(r.toFloat(), c.toFloat())
             }

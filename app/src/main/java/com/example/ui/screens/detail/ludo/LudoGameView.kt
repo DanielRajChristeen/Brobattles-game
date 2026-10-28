@@ -208,6 +208,10 @@ fun LudoGameView(
             val numHops = forwardPath.size - 1
 
             for (hopIndex in 0 until numHops) {
+                // Immediate audio and haptic feedback synchronized with the start of each soldier hop
+                soundManager.playSoldierHop(settings.soundEnabled)
+                soundManager.vibrateHop(settings.vibrationEnabled)
+
                 val hopDurationMs = 155L
                 val startTime = System.currentTimeMillis()
                 while (true) {
@@ -223,9 +227,6 @@ fun LudoGameView(
                     if (frac >= 1f) break
                     delay(16)
                 }
-                // Audio and haptic feedback on landing each square
-                soundManager.playTokenMove(settings.soundEnabled)
-                soundManager.vibrateMove(settings.vibrationEnabled)
             }
             animatingToken = null
 
@@ -355,6 +356,10 @@ fun LudoGameView(
                                 isAnimating = true
                                 val forwardPath = if (fromStep == -1) listOf(-1, 0) else (fromStep..toStep).toList()
                                 for (hopIndex in 0 until (forwardPath.size - 1)) {
+                                    // Immediate audio and haptic feedback synchronized with start of each soldier hop
+                                    soundManager.playSoldierHop(settings.soundEnabled)
+                                    soundManager.vibrateHop(settings.vibrationEnabled)
+
                                     val hopDurationMs = 155L
                                     val startTime = System.currentTimeMillis()
                                     while (true) {
@@ -370,8 +375,6 @@ fun LudoGameView(
                                         if (frac >= 1f) break
                                         delay(16)
                                     }
-                                    soundManager.playTokenMove(settings.soundEnabled)
-                                    soundManager.vibrateMove(settings.vibrationEnabled)
                                 }
                                 animatingToken = null
 
@@ -733,7 +736,7 @@ fun LudoGameView(
         ) {
             val statusMessage = when {
                 isRolling -> "🎲 Rolling the 3D dice..."
-                isAnimating -> "🚶 Token is hopping..."
+                isAnimating -> "🚶 Soldier is hopping..."
                 isBotThinking -> "🤖 Bot is deliberating..."
                 else -> gameState.statusText
             }
@@ -838,11 +841,11 @@ fun LudoGameView(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    HelpRuleItem(emoji = "🚀", title = "Launch Tokens", description = "Roll a 1 or 6 to move a token from your yard onto the starting square.")
-                    HelpRuleItem(emoji = "🔄", title = "Extra Turns", description = "Rolling a 1 or 6 grants an extra turn! Capturing an enemy token also grants an extra turn (max 1 extra turn).")
-                    HelpRuleItem(emoji = "⚔️", title = "Captures", description = "Landing on a square with an opponent's token sends it back to their yard.")
-                    HelpRuleItem(emoji = "⭐", title = "Safe Squares", description = "Tokens on the 4 star squares and starting squares are safe and cannot be captured.")
-                    HelpRuleItem(emoji = "🎯", title = "Home Center", description = "Exact roll required to enter the center finish area. First player to get all 4 tokens to the center wins!")
+                    HelpRuleItem(emoji = "🚀", title = "Launch Soldiers", description = "Roll a 1 to release a soldier from your castle onto the starting square.")
+                    HelpRuleItem(emoji = "🔄", title = "Extra Turns", description = "Rolling a 1 or 6 grants an extra turn! Capturing an enemy soldier also grants an extra turn (max 1 extra turn).")
+                    HelpRuleItem(emoji = "⚔️", title = "Captures", description = "Landing on a square with an opponent's soldier sends it back to their yard.")
+                    HelpRuleItem(emoji = "⭐", title = "Safe Squares", description = "Soldiers on the 4 star squares and starting squares are safe and cannot be captured.")
+                    HelpRuleItem(emoji = "🎯", title = "Home Center", description = "Exact roll required to enter the center finish area. First player to get all 4 soldiers to the center wins!")
                 }
             },
             confirmButton = {

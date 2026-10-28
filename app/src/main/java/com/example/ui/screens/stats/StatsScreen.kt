@@ -1,7 +1,9 @@
 package com.example.ui.screens.stats
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -337,7 +339,17 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                     .background(accentColor.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = gameDef?.emoji ?: "🎮", fontSize = 20.sp)
+                if (gameDef?.imageRes != null) {
+                    Image(
+                        painter = painterResource(id = gameDef.imageRes),
+                        contentDescription = gameDef.title,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                } else {
+                    Text(text = gameDef?.emoji ?: "🎮", fontSize = 20.sp)
+                }
             }
 
             Spacer(modifier = Modifier.width(14.dp))

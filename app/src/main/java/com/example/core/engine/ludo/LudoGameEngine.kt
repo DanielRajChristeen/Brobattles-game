@@ -4,34 +4,30 @@ import com.example.core.registry.GameMode
 import kotlin.random.Random
 
 /**
- * Authoritative game engine for Ludo.
+ * Authoritative game engine for BroBattles Ludo.
  *
- * Implements standard Ludo rules:
- * - 4 tokens per player starting in the home yard.
- * - Rolling 1 or 6 releases a token from the yard to the start cell.
- * - Extra turn granted on rolling 1 or 6, OR on capturing an enemy token (max 1 extra turn).
- * - Exact roll required to enter the center finish area.
- * - Safe cells (4 star squares + 4 starting squares) protect tokens from capture.
- * - Player wins when all 4 tokens reach the home center.
+ * Rules:
+ * - 2, 3, or 4 players (Red, Green, Yellow, Blue in clockwise order).
+ * - Release soldier from castle/yard on rolling a 1 only.
+ * - Rolling 1 or 6 grants an extra turn.
+ * - Capturing an opponent's soldier on an unprotected track square sends it back to the yard and grants an extra turn.
+ * - Safe squares (4 starting squares and 4 star safe squares) protect soldiers from capture.
+ * - After completing exactly 50 steps from the start square on the outer track, the soldier enters its colored home lane directly.
+ * - Exact roll required to reach the Home Center finish area (step 56).
+ * - First player to get all 4 soldiers to the center wins!
  */
 class LudoGameEngine(
     initialMode: GameMode = GameMode.SOLO,
-    playerCount: Int = 2,
-    usernames: Map<LudoColor, String> = emptyMap(),
-    initialPlayerCount: Int = playerCount
+    initialPlayerCount: Int = 2,
+    usernames: Map<LudoColor, String> = emptyMap()
 ) {
-    var state: LudoGameState
+
+    var state: LudoGameState = createInitialState(initialMode, initialPlayerCount, usernames)
         private set
 
-    init {
-        val actualCount = if (playerCount != 2) playerCount else initialPlayerCount
-        state = createInitialState(initialMode, actualCount, usernames)
-    }
-
-    fun setState(newState: LudoGameState) {
-        state = newState
-    }
-
+    /**
+     * Resets the match state for rematch or game mode changes.
+     */
     fun resetGame(
         mode: GameMode = state.mode,
         playerCount: Int = state.players.size,
@@ -40,14 +36,21 @@ class LudoGameEngine(
         state = createInitialState(mode, playerCount, usernames)
     }
 
+    /**
+     * Directly synchronizes state from authoritative host peer in Nearby Multiplayer.
+     */
+    fun setState(newState: LudoGameState) {
+        state = newState
+    }
+
     private fun createInitialState(
         mode: GameMode,
         playerCount: Int,
         usernames: Map<LudoColor, String>
     ): LudoGameState {
-        val players = when (mode) {
+        val players: List<LudoPlayerState> = when (mode) {
             GameMode.SOLO -> {
-                // VS Bot: Exactly two teams: Red (User) vs Yellow (Bot)
+                // VS Bot: Red (User) vs Yellow (Bot)
                 listOf(
                     LudoPlayerState(
                         color = LudoColor.RED,
@@ -94,7 +97,7 @@ class LudoGameEngine(
     }
 
     /**
-     * Rolls the dice for the current player and computes legal token moves.
+     * Rolls the dice for the current player and computes legal soldier moves.
      */
     fun rollDice(forcedValue: Int? = null): LudoGameState {
         if (!state.canRoll || state.isGameOver) return state
@@ -102,7 +105,7 @@ class LudoGameEngine(
         val roll = forcedValue ?: Random.nextInt(1, 7)
         val currentP = state.currentPlayer
 
-        // Determine which tokens can legally move with this roll
+        // Determine which soldiers can legally move with this roll
         val legalTokenIds = currentP.tokens.filter { token ->
             isMoveLegal(token, roll)
         }.map { it.id }
@@ -111,7 +114,6 @@ class LudoGameEngine(
             // No legal moves possible with this roll
             val nextTurnIndex = (state.currentTurnIndex + 1) % state.players.size
             val nextP = state.players[nextTurnIndex]
-
             state = state.copy(
                 diceRoll = roll,
                 canRoll = true,
@@ -124,37 +126,37 @@ class LudoGameEngine(
                 seqNum = state.seqNum + 1
             )
         } else {
-            // Legal moves exist, player must pick a token
+            // Legal moves exist, player must pick a soldier
             state = state.copy(
                 diceRoll = roll,
                 canRoll = false,
                 selectableTokenIds = legalTokenIds,
-                statusText = "${currentP.name} rolled $roll! Pick a token to move.",
+                statusText = "${currentP.name} rolled $roll! Pick a soldier to move.",
                 lastMoveDescription = "${currentP.name} rolled $roll",
                 extraTurn = false,
                 lastCapturedColor = null,
                 seqNum = state.seqNum + 1
             )
         }
+
         return state
     }
 
     /**
-     * Checks if moving a specific token with the given dice roll is legal.
+     * Checks if moving a specific soldier with the given dice roll is legal.
      */
     fun isMoveLegal(token: LudoToken, roll: Int): Boolean {
         if (token.isFinished) return false
-
         return if (token.isInYard) {
-            roll == 1 || roll == 6
+            roll == 1 // Only rolling a 1 releases a soldier from the castle/yard onto the board path
         } else {
-            // Exact roll required to reach or not overshoot Finish (step 57)
+            // Exact roll required to reach or not overshoot Finish (step 56)
             token.step + roll <= LudoToken.STEP_FINISH
         }
     }
 
     /**
-     * Moves the specified token using the current dice roll.
+     * Moves the specified soldier using the current dice roll.
      */
     fun moveToken(tokenId: Int): LudoGameState {
         if (state.canRoll || state.isGameOver || state.diceRoll == null) return state
@@ -172,6 +174,7 @@ class LudoGameEngine(
 
         val updatedToken = token.copy(step = newStep)
         val updatedTokens = currentP.tokens.map { if (it.id == tokenId) updatedToken else it }
+
         var capturedColor: LudoColor? = null
         var enemyTokenCaptured = false
 
@@ -182,7 +185,7 @@ class LudoGameEngine(
             } else if (updatedToken.isOnTrack) {
                 val targetTrackIdx = (currentP.color.startIndex + updatedToken.step) % 52
                 if (!LudoBoardCoordinates.isSafeSquare(targetTrackIdx)) {
-                    // Check if this enemy has a token on the same track square
+                    // Check if this enemy has a soldier on the same track square
                     val enemyTokensUpdated = player.tokens.map { enemyToken ->
                         if (enemyToken.isOnTrack && enemyToken.trackIndex == targetTrackIdx) {
                             enemyTokenCaptured = true
@@ -201,7 +204,7 @@ class LudoGameEngine(
             }
         }
 
-        // Check if current player has won (all 4 tokens finished)
+        // Check if current player has won (all 4 soldiers finished)
         val updatedCurrentPlayer = allPlayersUpdated[state.currentTurnIndex]
         val isWon = updatedCurrentPlayer.tokens.all { it.isFinished }
 
@@ -213,7 +216,7 @@ class LudoGameEngine(
                 selectableTokenIds = emptyList(),
                 winner = currentP.color,
                 statusText = "🏆 ${currentP.name} WINS THE MATCH! 🎉",
-                lastMoveDescription = "${currentP.name} moved token to Home Center and WON!",
+                lastMoveDescription = "${currentP.name} moved soldier to Home Center and WON!",
                 extraTurn = false,
                 lastCapturedColor = capturedColor,
                 seqNum = state.seqNum + 1
@@ -222,9 +225,8 @@ class LudoGameEngine(
         }
 
         // Determine if an extra turn is granted:
-        // Rule: Extra turn on rolling 1 or 6, OR capturing an enemy token (max 1 extra turn).
+        // Rule: Extra turn on rolling 1 or 6, OR capturing an enemy soldier (max 1 extra turn).
         val extraTurnGranted = (roll == 1 || roll == 6) || enemyTokenCaptured
-
         if (extraTurnGranted) {
             val reason = when {
                 enemyTokenCaptured && (roll == 1 || roll == 6) -> "Captured an enemy & rolled $roll"
@@ -237,7 +239,7 @@ class LudoGameEngine(
                 diceRoll = null,
                 selectableTokenIds = emptyList(),
                 statusText = "$reason! ${currentP.name} gets an extra turn 🎲",
-                lastMoveDescription = "${currentP.name} moved. $reason!",
+                lastMoveDescription = "${currentP.name} moved soldier. $reason!",
                 extraTurn = true,
                 lastCapturedColor = capturedColor,
                 seqNum = state.seqNum + 1
@@ -252,7 +254,7 @@ class LudoGameEngine(
                 diceRoll = null,
                 selectableTokenIds = emptyList(),
                 statusText = "${nextP.name}'s turn! Roll the dice 🎲",
-                lastMoveDescription = "${currentP.name} moved token",
+                lastMoveDescription = "${currentP.name} moved soldier",
                 extraTurn = false,
                 lastCapturedColor = capturedColor,
                 seqNum = state.seqNum + 1

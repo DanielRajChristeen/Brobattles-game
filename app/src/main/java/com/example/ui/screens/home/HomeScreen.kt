@@ -1,5 +1,6 @@
 package com.example.ui.screens.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -7,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -107,7 +111,17 @@ fun HomeScreen(
                 shape = RoundedCornerShape(26.dp),
                 containerColor = MaterialTheme.colorScheme.surface,
                 icon = {
-                    Text(text = game.emoji, fontSize = 42.sp)
+                    if (game.imageRes != null) {
+                        Image(
+                            painter = painterResource(id = game.imageRes),
+                            contentDescription = game.title,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                        )
+                    } else {
+                        Text(text = game.emoji, fontSize = 42.sp)
+                    }
                 },
                 title = {
                     Text(
@@ -160,11 +174,14 @@ private fun PlayfulSimpleHeader(
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "🎮",
-                    fontSize = 26.sp,
-                    modifier = Modifier.padding(end = 8.dp)
+                Image(
+                    painter = painterResource(id = R.drawable.app_logo),
+                    contentDescription = "BroBattles Logo",
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
                 )
+                Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "BROBATTLES",
                     style = MaterialTheme.typography.headlineMedium.copy(
@@ -237,15 +254,47 @@ private fun CleanGameGridTile(
                 shape = RoundedCornerShape(26.dp)
             )
             .bouncyClickable(onClick = onClick)
-            .testTag("game_card_${game.id}")
-            .padding(14.dp),
+            .testTag("game_card_${game.id}"),
         contentAlignment = Alignment.Center
     ) {
+        if (game.imageRes != null) {
+            Image(
+                painter = painterResource(id = game.imageRes),
+                contentDescription = game.title,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(26.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = game.emoji,
+                    fontSize = 44.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = game.title.uppercase(),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.6.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
         // Optional tiny SOON pill top-end
         if (!game.isAvailable) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .padding(10.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .padding(horizontal = 8.dp, vertical = 3.dp)
@@ -259,26 +308,6 @@ private fun CleanGameGridTile(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = game.emoji,
-                fontSize = 44.sp
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = game.title.uppercase(),
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = 0.6.sp
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center
-            )
         }
     }
 }

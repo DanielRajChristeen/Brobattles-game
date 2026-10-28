@@ -14,7 +14,8 @@ object GameRegistry {
         targetScoreOptions = listOf(3, 5, 10),
         defaultTargetScore = 5,
         accentHex = 0xFF8B5CF6, // Playful Purple
-        secondaryAccentHex = 0xFFEC4899 // Bubblegum Pink
+        secondaryAccentHex = 0xFFEC4899, // Bubblegum Pink
+        imageRes = com.example.R.drawable.ic_game_xo
     )
 
     val TUG_OF_WAR = GameDefinition(
@@ -81,7 +82,7 @@ object GameRegistry {
         id = "ludo",
         title = "Ludo",
         subtitle = "Race to the center!",
-        description = "Roll 1 or 6 to launch tokens! Capture opponents, navigate safe stars, and get all 4 tokens to the center to win.",
+        description = "Roll 1 to launch soldiers! Capture opponents, navigate safe stars, and get all 4 soldiers to the center to win.",
         emoji = "🎲",
         statusTag = "LET'S GO! 🚀",
         isAvailable = true,
