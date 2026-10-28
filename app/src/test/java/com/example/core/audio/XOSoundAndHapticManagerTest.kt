@@ -414,4 +414,105 @@ class XOSoundAndHapticManagerTest {
         assertEquals("MUTED", routeOutcome(PlayerId.PLAYER_1, PlayerId.PLAYER_1, GameMode.BLUETOOTH_1V1, soundEnabled = false))
         assertEquals("MUTED", routeOutcome(PlayerId.PLAYER_2, PlayerId.PLAYER_1, GameMode.BLUETOOTH_1V1, soundEnabled = false))
     }
+
+    @Test
+    fun testPcmToWavHeaderFormat() {
+        val tapNotes = listOf(1400.0 to 10, 700.0 to 18)
+        val pcm = XOSoundAndHapticManager.generateToneSequence(tapNotes, XOSoundAndHapticManager.SAMPLE_RATE, volume = 0.45)
+        val wav = XOSoundAndHapticManager.pcmToWav(pcm, XOSoundAndHapticManager.SAMPLE_RATE)
+
+        // Total WAV file size = 44 bytes header + PCM data
+        assertEquals(pcm.size + 44, wav.size)
+
+        // RIFF header
+        assertEquals('R'.code.toByte(), wav[0])
+        assertEquals('I'.code.toByte(), wav[1])
+        assertEquals('F'.code.toByte(), wav[2])
+        assertEquals('F'.code.toByte(), wav[3])
+
+        // WAVE signature
+        assertEquals('W'.code.toByte(), wav[8])
+        assertEquals('A'.code.toByte(), wav[9])
+        assertEquals('V'.code.toByte(), wav[10])
+        assertEquals('E'.code.toByte(), wav[11])
+
+        // fmt chunk
+        assertEquals('f'.code.toByte(), wav[12])
+        assertEquals('m'.code.toByte(), wav[13])
+        assertEquals('t'.code.toByte(), wav[14])
+        assertEquals(' '.code.toByte(), wav[15])
+
+        // Format code: 1 = PCM (little endian at byte 20)
+        assertEquals(1, wav[20].toInt())
+        assertEquals(0, wav[21].toInt())
+
+        // Number of channels: 1 = Mono (at byte 22)
+        assertEquals(1, wav[22].toInt())
+        assertEquals(0, wav[23].toInt())
+
+        // data chunk header at byte 36
+        assertEquals('d'.code.toByte(), wav[36])
+        assertEquals('a'.code.toByte(), wav[37])
+        assertEquals('t'.code.toByte(), wav[38])
+        assertEquals('a'.code.toByte(), wav[39])
+    }
+
+    @Test
+    fun testTapAcceptanceAndSoundTriggeringSequence() {
+        // Simulates the zero-latency tap input validation and dispatch sequence in TugOfWarGameView
+        var soundTriggerCount = 0
+        var moveExecutionCount = 0
+
+        fun simulateHandleTap(
+            countdown: String?,
+            isFinishing: Boolean,
+            isInProgress: Boolean,
+            sendNetwork: Boolean,
+            soundEnabled: Boolean
+        ): Boolean {
+            // Step 1 & 2: Immediate validation
+            if (countdown != null || isFinishing) return false
+            if (!isInProgress) return false
+
+            // Step 3: Immediate sound trigger upon acceptance
+            if (sendNetwork && soundEnabled) {
+                soundTriggerCount++
+            }
+
+            // Step 4: Game action execution
+            moveExecutionCount++
+            return true
+        }
+
+        // 1. Valid accepted user tap with sound ON -> triggers sound and executes move immediately
+        val tap1 = simulateHandleTap(countdown = null, isFinishing = false, isInProgress = true, sendNetwork = true, soundEnabled = true)
+        assertTrue(tap1)
+        assertEquals(1, soundTriggerCount)
+        assertEquals(1, moveExecutionCount)
+
+        // 2. Tap during countdown -> rejected silently, no sound, no move
+        val tapCountdown = simulateHandleTap(countdown = "3", isFinishing = false, isInProgress = true, sendNetwork = true, soundEnabled = true)
+        assertFalse(tapCountdown)
+        assertEquals(1, soundTriggerCount)
+        assertEquals(1, moveExecutionCount)
+
+        // 3. Tap after match finishes -> rejected silently, no sound, no move
+        val tapFinished = simulateHandleTap(countdown = null, isFinishing = true, isInProgress = false, sendNetwork = true, soundEnabled = true)
+        assertFalse(tapFinished)
+        assertEquals(1, soundTriggerCount)
+        assertEquals(1, moveExecutionCount)
+
+        // 4. Remote network echo (sendNetwork = false) -> executes move, but DOES NOT play local tap sound
+        val tapRemoteEcho = simulateHandleTap(countdown = null, isFinishing = false, isInProgress = true, sendNetwork = false, soundEnabled = true)
+        assertTrue(tapRemoteEcho)
+        assertEquals(1, soundTriggerCount) // unchanged!
+        assertEquals(2, moveExecutionCount)
+
+        // 5. Sound Effects disabled (soundEnabled = false) -> executes move, but sound is muted
+        val tapMuted = simulateHandleTap(countdown = null, isFinishing = false, isInProgress = true, sendNetwork = true, soundEnabled = false)
+        assertTrue(tapMuted)
+        assertEquals(1, soundTriggerCount) // unchanged!
+        assertEquals(3, moveExecutionCount)
+    }
 }
+

@@ -563,7 +563,7 @@ fun TugOfWarGameView(
                 .clip(RoundedCornerShape(26.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .border(2.dp, ToyboxBorder, RoundedCornerShape(26.dp))
-                .pointerInput(selectedMode, countdown, isFinishingRound) {
+                .pointerInput(selectedMode, isNearbyMode, localPlayer) {
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Main)

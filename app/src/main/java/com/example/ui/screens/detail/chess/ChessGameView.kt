@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,12 +44,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.audio.ChessSoundManager
+import com.example.core.audio.ChessSoundManager.MatchOutcomeAudio
 import com.example.core.engine.chess.ChessBoardOrientation
 import com.example.core.engine.chess.ChessDifficulty
 import com.example.core.engine.chess.ChessEngine
@@ -83,6 +87,14 @@ fun ChessGameView(
     modifier: Modifier = Modifier
 ) {
     val view = LocalView.current
+    val context = LocalContext.current
+    val soundManager = remember { ChessSoundManager(context.applicationContext) }
+    DisposableEffect(soundManager) {
+        onDispose {
+            soundManager.release()
+        }
+    }
+
     val scope = rememberCoroutineScope()
     val settings by viewModel.settings.collectAsState()
     val colors = ChillTheme.colors
@@ -100,6 +112,7 @@ fun ChessGameView(
     var selectedSquare by remember { mutableStateOf<ChessSquare?>(null) }
     var isBotThinking by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
+    var hasPlayedOutcomeAudio by remember { mutableStateOf(false) }
     var gameSessionId by remember { mutableStateOf(0) }
 
     // Resolved color for this specific match (remains fixed during entire match)
@@ -138,10 +151,12 @@ fun ChessGameView(
             delay(500)
             val botMove = com.example.core.engine.chess.ChessBot.decideMove(gameState, difficulty)
             if (botMove != null) {
+                val isCapture = botMove.capturedPiece != null || botMove.isEnPassant || gameState.pieceAt(botMove.to) != null
                 val success = engine.makeMove(botMove)
                 if (success) {
                     gameState = engine.state
-                    vibrate()
+                    soundManager.playMoveSound(isCapture = isCapture, isSoundEnabled = settings.soundEnabled)
+                    soundManager.vibrateMove(settings.vibrationEnabled)
                 }
             }
             isBotThinking = false
@@ -163,10 +178,13 @@ fun ChessGameView(
                                 runCatching { PieceType.valueOf(promoStr) }.getOrNull()
                             } else null
                             val move = ChessMove(from, to, promo)
+                            val isCapture = gameState.pieceAt(to) != null ||
+                                (gameState.pieceAt(from)?.type == PieceType.PAWN && from.col != to.col && gameState.pieceAt(to) == null)
                             if (engine.makeMove(move)) {
                                 gameState = engine.state
                                 selectedSquare = null
-                                vibrate()
+                                soundManager.playMoveSound(isCapture = isCapture, isSoundEnabled = settings.soundEnabled)
+                                soundManager.vibrateMove(settings.vibrationEnabled)
                             }
                         }
                     }
@@ -176,6 +194,7 @@ fun ChessGameView(
                         selectedSquare = null
                         pendingPromotionFromTo = null
                         matchRecorded = false
+                        hasPlayedOutcomeAudio = false
                         vibrate()
                     }
                 }
@@ -183,36 +202,57 @@ fun ChessGameView(
         }
     }
 
-    // Record Match to Room DB on game completion
-    LaunchedEffect(gameState.status) {
+    // Record Match to Room DB and play outcome audio / checkmate vibration on game completion
+    LaunchedEffect(gameState.status, gameSessionId) {
         val status = gameState.status
-        if (status.isGameOver && !matchRecorded) {
-            matchRecorded = true
-            val (winnerName, p1Score, p2Score) = when (status) {
-                is ChessGameStatus.Checkmate -> {
-                    if (selectedMode == GameMode.SOLO) {
-                        if (status.winner == resolvedPlayerColor) Triple("PLAYER_1", 1, 0)
-                        else Triple("PLAYER_2", 0, 1)
-                    } else if (isNearbyMode) {
-                        val hostColor = if (isHost) localColor else opponentColor
-                        if (status.winner == hostColor) Triple("PLAYER_1", 1, 0)
-                        else Triple("PLAYER_2", 0, 1)
-                    } else {
-                        if (status.winner == PieceColor.WHITE) Triple("PLAYER_1", 1, 0)
-                        else Triple("PLAYER_2", 0, 1)
+        if (status.isGameOver) {
+            if (!matchRecorded) {
+                matchRecorded = true
+                val (winnerName, p1Score, p2Score) = when (status) {
+                    is ChessGameStatus.Checkmate -> {
+                        if (selectedMode == GameMode.SOLO) {
+                            if (status.winner == resolvedPlayerColor) Triple("PLAYER_1", 1, 0)
+                            else Triple("PLAYER_2", 0, 1)
+                        } else if (isNearbyMode) {
+                            val hostColor = if (isHost) localColor else opponentColor
+                            if (status.winner == hostColor) Triple("PLAYER_1", 1, 0)
+                            else Triple("PLAYER_2", 0, 1)
+                        } else {
+                            if (status.winner == PieceColor.WHITE) Triple("PLAYER_1", 1, 0)
+                            else Triple("PLAYER_2", 0, 1)
+                        }
                     }
+                    else -> Triple("DRAW", 0, 0)
                 }
-                else -> Triple("DRAW", 0, 0)
+                viewModel.repository.recordMatch(
+                    gameId = "chess",
+                    gameTitle = "Chess",
+                    mode = selectedMode.name,
+                    player1Score = p1Score,
+                    player2Score = p2Score,
+                    winner = winnerName,
+                    durationSeconds = 120
+                )
             }
-            viewModel.repository.recordMatch(
-                gameId = "chess",
-                gameTitle = "Chess",
-                mode = selectedMode.name,
-                player1Score = p1Score,
-                player2Score = p2Score,
-                winner = winnerName,
-                durationSeconds = 120
-            )
+
+            if (!hasPlayedOutcomeAudio) {
+                hasPlayedOutcomeAudio = true
+                val isHumanWinnerInSolo = status is ChessGameStatus.Checkmate && status.winner == resolvedPlayerColor
+                val isLocalWinnerInNearby = status is ChessGameStatus.Checkmate && status.winner == localColor
+
+                // 1. Checkmate vibration for the losing opponent only
+                if (ChessSoundManager.shouldVibrateOnGameEnd(status, selectedMode, isHumanWinnerInSolo, isLocalWinnerInNearby)) {
+                    soundManager.vibrateCheckmate(settings.vibrationEnabled)
+                }
+
+                // 2. Play matching outcome theme
+                when (ChessSoundManager.resolveOutcomeAudio(status, selectedMode, isHumanWinnerInSolo, isLocalWinnerInNearby)) {
+                    MatchOutcomeAudio.VICTORY -> soundManager.playVictory(settings.soundEnabled)
+                    MatchOutcomeAudio.DEFEAT -> soundManager.playDefeat(settings.soundEnabled)
+                    MatchOutcomeAudio.DRAW -> soundManager.playDraw(settings.soundEnabled)
+                    MatchOutcomeAudio.NONE -> {}
+                }
+            }
         }
     }
 
@@ -259,10 +299,12 @@ fun ChessGameView(
                     pendingPromotionFromTo = from to square
                 } else {
                     val move = matchingMoves.first()
+                    val isCapture = move.capturedPiece != null || move.isEnPassant || gameState.pieceAt(move.to) != null
                     if (engine.makeMove(move)) {
                         gameState = engine.state
                         selectedSquare = null
-                        vibrate()
+                        soundManager.playMoveSound(isCapture = isCapture, isSoundEnabled = settings.soundEnabled)
+                        soundManager.vibrateMove(settings.vibrationEnabled)
                         if (isNearbyMode) {
                             multiplayerManager.sendAction(
                                 "CHESS_MOVE",
@@ -285,10 +327,12 @@ fun ChessGameView(
             it.from == fromTo.first && it.to == fromTo.second && it.promotion == pieceType
         } ?: ChessMove(from = fromTo.first, to = fromTo.second, promotion = pieceType)
 
+        val isCapture = promoMove.capturedPiece != null || promoMove.isEnPassant || gameState.pieceAt(promoMove.to) != null
         if (engine.makeMove(promoMove)) {
             gameState = engine.state
             selectedSquare = null
-            vibrate()
+            soundManager.playMoveSound(isCapture = isCapture, isSoundEnabled = settings.soundEnabled)
+            soundManager.vibrateMove(settings.vibrationEnabled)
             if (isNearbyMode) {
                 multiplayerManager.sendAction(
                     "CHESS_MOVE",
@@ -306,6 +350,7 @@ fun ChessGameView(
         selectedSquare = null
         isBotThinking = false
         matchRecorded = false
+        hasPlayedOutcomeAudio = false
         gameSessionId++
         vibrate()
         if (isNearbyMode) {
