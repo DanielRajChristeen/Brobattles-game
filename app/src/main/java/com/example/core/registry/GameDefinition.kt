@@ -15,5 +15,9 @@ data class GameDefinition(
     val secondaryAccentHex: Long = 0xFFEC4899,
     val minPlayers: Int = 2,
     val maxPlayers: Int = 2,
-    val imageRes: Int? = null
-)
+    val imageRes: Int? = null,
+    val imageResDark: Int? = null,
+    val imageResLight: Int? = null
+) {
+    fun iconRes(isDark: Boolean): Int? = if (isDark) (imageResDark ?: imageRes) else (imageResLight ?: imageRes)
+}

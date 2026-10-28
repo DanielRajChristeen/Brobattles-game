@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">BroBattles</string>
+    <string name="app_name">Wifi play</string>
     <!-- Satisfies Google Play Services measurement lookup if queried -->
     <string name="google_app_id" translatable="false">1:100000000000:android:0000000000000000</string>
 </resources>

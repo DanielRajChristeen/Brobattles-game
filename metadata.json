@@ -1,5 +1,5 @@
 {
-  "name": "BroBattles",
+  "name": "Wifi play",
   "description": "No Internet. Just Rivalry. Fun, lightweight offline games.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

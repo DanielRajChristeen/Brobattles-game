@@ -28,7 +28,7 @@ class ExampleRobolectricTest {
   fun `read string from context`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
-    assertEquals("BroBattles", appName)
+    assertEquals("Wifi play", appName)
   }
 
   @Test
@@ -45,6 +45,7 @@ class ExampleRobolectricTest {
     assertNotNull(snakes)
     assertTrue(snakes!!.isAvailable)
     assertEquals("Snakes & Ladders", snakes.title)
+    assertEquals(R.drawable.ic_game_snakes, snakes.imageRes)
 
     val xo = GameRegistry.getGameById("xo")
     assertNotNull(xo)
@@ -54,11 +55,13 @@ class ExampleRobolectricTest {
     val tug = GameRegistry.getGameById("tug_of_war")
     assertNotNull(tug)
     assertTrue(tug!!.isAvailable)
+    assertEquals(R.drawable.ic_game_tug, tug.imageRes)
 
     val chess = GameRegistry.getGameById("chess")
     assertNotNull(chess)
     assertTrue(chess!!.isAvailable)
     assertEquals("Chess", chess.title)
+    assertEquals(R.drawable.ic_game_chess, chess.imageRes)
     assertEquals("♟️", chess.emoji)
 
     val dotConnections = GameRegistry.getGameById("dot_connections")
@@ -66,6 +69,14 @@ class ExampleRobolectricTest {
     assertTrue(dotConnections!!.isAvailable)
     assertEquals("Dot Connections", dotConnections.title)
     assertEquals("🔲", dotConnections.emoji)
+    assertEquals(R.drawable.ic_game_dots_dark, dotConnections.iconRes(isDark = true))
+    assertEquals(R.drawable.ic_game_dots_light, dotConnections.iconRes(isDark = false))
+
+    // Verify dark vs light icon switching for XO and Chess
+    assertEquals(R.drawable.ic_game_xo_dark, xo.iconRes(isDark = true))
+    assertEquals(R.drawable.ic_game_xo_light, xo.iconRes(isDark = false))
+    assertEquals(R.drawable.ic_game_chess_dark, chess.iconRes(isDark = true))
+    assertEquals(R.drawable.ic_game_chess_light, chess.iconRes(isDark = false))
 
     val archery = GameRegistry.getGameById("archery")
     assertNull(archery)

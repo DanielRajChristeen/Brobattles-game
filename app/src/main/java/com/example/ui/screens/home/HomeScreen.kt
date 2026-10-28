@@ -48,6 +48,7 @@ import com.example.core.registry.GameDefinition
 import com.example.core.registry.GameRegistry
 import com.example.ui.components.ChunkyButton
 import com.example.ui.components.bouncyClickable
+import com.example.ui.theme.ChillTheme
 import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.ToyboxBorder
 
@@ -111,9 +112,11 @@ fun HomeScreen(
                 shape = RoundedCornerShape(26.dp),
                 containerColor = MaterialTheme.colorScheme.surface,
                 icon = {
-                    if (game.imageRes != null) {
+                    val isDark = ChillTheme.colors.isDark
+                    val currentIconRes = game.iconRes(isDark)
+                    if (currentIconRes != null) {
                         Image(
-                            painter = painterResource(id = game.imageRes),
+                            painter = painterResource(id = currentIconRes),
                             contentDescription = game.title,
                             modifier = Modifier
                                 .size(56.dp)
@@ -175,15 +178,15 @@ private fun PlayfulSimpleHeader(
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
-                    painter = painterResource(id = R.drawable.app_logo),
-                    contentDescription = "BroBattles Logo",
+                    painter = painterResource(id = R.drawable.app_icon),
+                    contentDescription = "Wifi play Logo",
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(38.dp)
                         .clip(RoundedCornerShape(8.dp))
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "BROBATTLES",
+                    text = "WIFI PLAY",
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.sp
@@ -241,6 +244,8 @@ private fun CleanGameGridTile(
     onClick: () -> Unit
 ) {
     val accentColor = Color(game.accentHex)
+    val isDark = ChillTheme.colors.isDark
+    val currentIconRes = game.iconRes(isDark)
 
     Box(
         modifier = Modifier
@@ -257,9 +262,9 @@ private fun CleanGameGridTile(
             .testTag("game_card_${game.id}"),
         contentAlignment = Alignment.Center
     ) {
-        if (game.imageRes != null) {
+        if (currentIconRes != null) {
             Image(
-                painter = painterResource(id = game.imageRes),
+                painter = painterResource(id = currentIconRes),
                 contentDescription = game.title,
                 modifier = Modifier
                     .fillMaxSize()
@@ -267,24 +272,13 @@ private fun CleanGameGridTile(
                 contentScale = ContentScale.Crop
             )
         } else {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = game.emoji,
-                    fontSize = 44.sp
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = game.title.uppercase(),
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 0.6.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center
+                    fontSize = 52.sp
                 )
             }
         }

@@ -15,7 +15,9 @@ object GameRegistry {
         defaultTargetScore = 5,
         accentHex = 0xFF8B5CF6, // Playful Purple
         secondaryAccentHex = 0xFFEC4899, // Bubblegum Pink
-        imageRes = com.example.R.drawable.ic_game_xo
+        imageRes = com.example.R.drawable.ic_game_xo,
+        imageResDark = com.example.R.drawable.ic_game_xo_dark,
+        imageResLight = com.example.R.drawable.ic_game_xo_light
     )
 
     val TUG_OF_WAR = GameDefinition(
@@ -30,7 +32,10 @@ object GameRegistry {
         targetScoreOptions = listOf(1, 3, 5),
         defaultTargetScore = 1,
         accentHex = 0xFFF97316, // Warm Orange
-        secondaryAccentHex = 0xFFFBBF24 // Sunny Yellow
+        secondaryAccentHex = 0xFFFBBF24, // Sunny Yellow
+        imageRes = com.example.R.drawable.ic_game_tug,
+        imageResDark = com.example.R.drawable.ic_game_tug_dark,
+        imageResLight = com.example.R.drawable.ic_game_tug_light
     )
 
     val SNAKES_AND_LADDERS = GameDefinition(
@@ -45,7 +50,10 @@ object GameRegistry {
         targetScoreOptions = emptyList(),
         defaultTargetScore = 1,
         accentHex = 0xFF10B981, // Emerald Green
-        secondaryAccentHex = 0xFF84CC16 // Bright Lime
+        secondaryAccentHex = 0xFF84CC16, // Bright Lime
+        imageRes = com.example.R.drawable.ic_game_snakes,
+        imageResDark = com.example.R.drawable.ic_game_snakes_dark,
+        imageResLight = com.example.R.drawable.ic_game_snakes_light
     )
 
     val CHESS = GameDefinition(
@@ -60,7 +68,10 @@ object GameRegistry {
         targetScoreOptions = emptyList(),
         defaultTargetScore = 1,
         accentHex = 0xFFD97706, // Warm Caramel
-        secondaryAccentHex = 0xFF78350F // Coffee Wood
+        secondaryAccentHex = 0xFF78350F, // Coffee Wood
+        imageRes = com.example.R.drawable.ic_game_chess,
+        imageResDark = com.example.R.drawable.ic_game_chess_dark,
+        imageResLight = com.example.R.drawable.ic_game_chess_light
     )
 
     val DOT_CONNECTIONS = GameDefinition(
@@ -75,7 +86,10 @@ object GameRegistry {
         targetScoreOptions = emptyList(),
         defaultTargetScore = 1,
         accentHex = 0xFFF97316, // Playful Orange
-        secondaryAccentHex = 0xFF8B5CF6 // Playful Purple
+        secondaryAccentHex = 0xFF8B5CF6, // Playful Purple
+        imageRes = com.example.R.drawable.ic_game_dots,
+        imageResDark = com.example.R.drawable.ic_game_dots_dark,
+        imageResLight = com.example.R.drawable.ic_game_dots_light
     )
 
     val LUDO = GameDefinition(
@@ -90,7 +104,10 @@ object GameRegistry {
         targetScoreOptions = emptyList(),
         defaultTargetScore = 1,
         accentHex = 0xFFEA4335, // Ludo Red
-        secondaryAccentHex = 0xFF34A853 // Ludo Green
+        secondaryAccentHex = 0xFF34A853, // Ludo Green
+        imageRes = com.example.R.drawable.ic_game_ludo,
+        imageResDark = com.example.R.drawable.ic_game_ludo_dark,
+        imageResLight = com.example.R.drawable.ic_game_ludo_light
     )
 
     val CHECKERS = GameDefinition(
@@ -105,7 +122,10 @@ object GameRegistry {
         targetScoreOptions = emptyList(),
         defaultTargetScore = 1,
         accentHex = 0xFFDC2626, // Crimson Red
-        secondaryAccentHex = 0xFF1E293B // Slate Black
+        secondaryAccentHex = 0xFF1E293B, // Slate Black
+        imageRes = com.example.R.drawable.ic_game_checkers,
+        imageResDark = com.example.R.drawable.ic_game_checkers_dark,
+        imageResLight = com.example.R.drawable.ic_game_checkers_light
     )
 
     val games: List<GameDefinition> = listOf(
