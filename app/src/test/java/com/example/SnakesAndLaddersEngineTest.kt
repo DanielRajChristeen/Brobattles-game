@@ -26,25 +26,71 @@ class SnakesAndLaddersEngineTest {
     }
 
     @Test
-    fun `normal move advances square without ladder or snake`() {
+    fun `starting roll of 1 releases stick figure from square 1 to square 2 with extra turn`() {
         val engine = SnakesAndLaddersGameEngine(initialTargetScore = 1)
-        // 1 + 2 = 3 (neither ladder nor snake)
-        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1)
+        engine.makeMove(SnakesAndLaddersMove(1), PlayerId.PLAYER_1)
 
         val state = engine.state
-        assertEquals(3, state.p1Position)
+        assertEquals(2, state.p1Position)
         assertEquals(1, state.p2Position)
-        assertEquals(2, state.lastDiceRoll)
+        assertEquals(1, state.lastDiceRoll)
+        assertTrue(state.extraTurnGranted)
+        assertEquals(PlayerId.PLAYER_1, state.activePlayer)
+    }
+
+    @Test
+    fun `starting rolls of 2, 3, 4, 5 do not release stick figure and pass turn`() {
+        for (roll in 2..5) {
+            val engine = SnakesAndLaddersGameEngine(initialTargetScore = 1)
+            engine.makeMove(SnakesAndLaddersMove(roll), PlayerId.PLAYER_1)
+
+            val state = engine.state
+            assertEquals("Stick figure must remain at square 1 on roll $roll", 1, state.p1Position)
+            assertEquals(roll, state.lastDiceRoll)
+            assertEquals("Turn must pass to next player on roll $roll", PlayerId.PLAYER_2, state.activePlayer)
+        }
+    }
+
+    @Test
+    fun `starting roll of 6 does not release stick figure but preserves extra turn`() {
+        val engine = SnakesAndLaddersGameEngine(initialTargetScore = 1)
+        engine.makeMove(SnakesAndLaddersMove(6), PlayerId.PLAYER_1)
+
+        val state = engine.state
+        assertEquals(1, state.p1Position)
+        assertEquals(6, state.lastDiceRoll)
+        assertTrue(state.extraTurnGranted)
+        assertEquals("Player 1 retains turn on roll 6", PlayerId.PLAYER_1, state.activePlayer)
+    }
+
+    @Test
+    fun `normal move advances square without ladder or snake after leaving square 1`() {
+        val engine = SnakesAndLaddersGameEngine(initialTargetScore = 1)
+        // 1. Roll 1 to release onto square 2
+        engine.makeMove(SnakesAndLaddersMove(1), PlayerId.PLAYER_1)
+        assertEquals(2, engine.state.p1Position)
+
+        // 2. Roll 3: 2 + 3 = 5 (neither ladder nor snake)
+        engine.makeMove(SnakesAndLaddersMove(3), PlayerId.PLAYER_1)
+
+        val state = engine.state
+        assertEquals(5, state.p1Position)
+        assertEquals(1, state.p2Position)
+        assertEquals(3, state.lastDiceRoll)
         assertEquals(PlayerId.PLAYER_2, state.activePlayer)
         assertNull(state.ladderClimbed)
         assertNull(state.snakeSlid)
     }
 
     @Test
-    fun `landing on ladder climbs to ladder top`() {
+    fun `landing on ladder climbs to ladder top after leaving square 1`() {
         val engine = SnakesAndLaddersGameEngine(initialTargetScore = 1)
-        // 1 + 3 = 4 (Ladder bottom 4 -> top 14)
-        engine.makeMove(SnakesAndLaddersMove(3), PlayerId.PLAYER_1)
+        // 1. Roll 1 to release onto square 2
+        engine.makeMove(SnakesAndLaddersMove(1), PlayerId.PLAYER_1)
+        assertEquals(2, engine.state.p1Position)
+
+        // 2. Roll 2: 2 + 2 = 4 (Ladder bottom 4 -> top 14)
+        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1)
 
         val state = engine.state
         assertEquals(14, state.p1Position)
@@ -54,14 +100,17 @@ class SnakesAndLaddersEngineTest {
     }
 
     @Test
-    fun `landing on snake slides to snake tail`() {
+    fun `landing on snake slides to snake tail after leaving square 1`() {
         val engine = SnakesAndLaddersGameEngine(initialTargetScore = 1)
-        // Ladder at 4 -> 14
-        engine.makeMove(SnakesAndLaddersMove(3), PlayerId.PLAYER_1)
+        // 1. P1 rolls 1 -> square 2
+        engine.makeMove(SnakesAndLaddersMove(1), PlayerId.PLAYER_1)
+        // 2. P1 rolls 2 -> ladder at 4 -> 14
+        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1)
         assertEquals(14, engine.state.p1Position)
 
-        // P2 move (dice 2 so turn passes back to P1)
+        // P2 move (dice 2, fails to leave square 1, turn passes back to P1)
         engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_2)
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
 
         // P1 moves 14 + 3 = 17 (Snake head 17 -> tail 7)
         engine.makeMove(SnakesAndLaddersMove(3), PlayerId.PLAYER_1)
@@ -196,13 +245,12 @@ class SnakesAndLaddersEngineTest {
     fun `rolling 6 grants an extra turn even after ladder climb`() {
         val engine = SnakesAndLaddersGameEngine(initialPlayerCount = 4)
         // Position P1 at square 3 (so 3 + 6 = 9 -> ladder to 31)
-        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_1) // P1 at 3, turn to P2
-        assertEquals(PlayerId.PLAYER_2, engine.state.activePlayer)
-
-        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_2) // turn to P3
-        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_3) // turn to P4
-        engine.makeMove(SnakesAndLaddersMove(2), PlayerId.PLAYER_4) // turn back to P1
-        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+        engine.syncState(
+            engine.state.copy(
+                playerPositions = listOf(3, 1, 1, 1),
+                activePlayer = PlayerId.PLAYER_1
+            )
+        )
 
         // Roll 6: 3 + 6 = 9 (ladder to 31), extra turn granted!
         engine.makeMove(SnakesAndLaddersMove(6), PlayerId.PLAYER_1)

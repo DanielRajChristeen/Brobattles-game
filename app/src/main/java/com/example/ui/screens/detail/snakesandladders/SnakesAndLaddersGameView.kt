@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -52,6 +53,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -59,6 +61,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.audio.SnakesAndLaddersSoundManager
+import com.example.core.audio.SnakesAndLaddersSoundManager.SnakesOutcomeAudio
 import com.example.core.bot.SnakesAndLaddersBotOpponent
 import com.example.core.engine.GameStatus
 import com.example.core.engine.PlayerId
@@ -99,6 +103,13 @@ fun SnakesAndLaddersGameView(
 ) {
     val settings by viewModel.settings.collectAsState()
     val view = LocalView.current
+    val context = LocalContext.current
+    val soundManager = remember { SnakesAndLaddersSoundManager(context.applicationContext) }
+    DisposableEffect(soundManager) {
+        onDispose {
+            soundManager.release()
+        }
+    }
     val scope = rememberCoroutineScope()
 
     val activePlayerCount = if (selectedMode == GameMode.SOLO) 2 else playerCount.coerceIn(2, 5)
@@ -129,6 +140,7 @@ fun SnakesAndLaddersGameView(
     var showHelpDialog by remember { mutableStateOf(false) }
     var showWinDialog by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
+    var hasPlayedOutcomeAudio by remember { mutableStateOf(false) }
 
     // Board Dimensions in Px
     var boardPixelSize by remember { mutableFloatStateOf(0f) }
@@ -196,6 +208,15 @@ fun SnakesAndLaddersGameView(
             }
             val cellSize = boardPixelSize / 10f
             val startSquare = playerSquares[pIndex]
+
+            // 0. Check Starting Rule: Only dice roll 1 starts a stick figure from square 1
+            if (startSquare == 1 && roll != 1) {
+                engine.makeMove(SnakesAndLaddersMove(roll), player)
+                gameState = engine.state
+                isMoving = false
+                return@launch
+            }
+
             val targetSquare = startSquare + roll
 
             // 1. Check Exact Roll Rule
@@ -214,6 +235,9 @@ fun SnakesAndLaddersGameView(
             for (step in (startSquare + 1)..targetSquare) {
                 val stepTarget = getCellOffset(step)
                 val prevTarget = getCellOffset(step - 1)
+
+                // Play light running footstep sound
+                soundManager.playFootstep(settings.soundEnabled)
 
                 // Hop animation along step
                 val hopFrames = 6
@@ -249,6 +273,7 @@ fun SnakesAndLaddersGameView(
                 if (pIndex < playerPoses.size) {
                     playerPoses[pIndex] = TokenPose.CLIMBING
                 }
+                soundManager.playLadderClimb(settings.soundEnabled)
                 vibrate()
 
                 val climbSteps = 24
@@ -262,6 +287,8 @@ fun SnakesAndLaddersGameView(
                     }
                     delay(25)
                 }
+
+                soundManager.stopLadderClimb()
 
                 // Land on ladder top
                 if (pIndex < playerSquares.size) {
@@ -282,6 +309,7 @@ fun SnakesAndLaddersGameView(
                 if (pIndex < playerPoses.size) {
                     playerPoses[pIndex] = TokenPose.SLIDING
                 }
+                soundManager.playSnakeSlide(settings.soundEnabled)
                 vibrate()
 
                 val slideSteps = 26
@@ -296,6 +324,8 @@ fun SnakesAndLaddersGameView(
                     }
                     delay(25)
                 }
+
+                soundManager.stopSnakeSlide()
 
                 // Land on snake tail
                 activeSnakeHead = null
@@ -320,6 +350,7 @@ fun SnakesAndLaddersGameView(
                 if (pIndex < playerPoses.size) {
                     playerPoses[pIndex] = TokenPose.CELEBRATING
                 }
+                soundManager.playStickFigureWinning(settings.soundEnabled)
                 delay(1300)
                 showWinDialog = true
                 if (!matchRecorded) {
@@ -350,6 +381,7 @@ fun SnakesAndLaddersGameView(
             val rollResult = Random.nextInt(1, 7)
             displayedDice = rollResult
             isRolling = true
+            soundManager.playDiceRoll(settings.soundEnabled)
             vibrate()
 
             if (sendNetwork && isNearbyMode) {
@@ -359,6 +391,7 @@ fun SnakesAndLaddersGameView(
             // Wait for 3D cube to tumble, land, bounce, and transition to 2D result
             delay(860)
             isRolling = false
+            soundManager.stopDiceRoll()
             vibrate()
             delay(150)
 
@@ -377,9 +410,11 @@ fun SnakesAndLaddersGameView(
                         scope.launch {
                             displayedDice = rollResult
                             isRolling = true
+                            soundManager.playDiceRoll(settings.soundEnabled)
                             vibrate()
                             delay(860)
                             isRolling = false
+                            soundManager.stopDiceRoll()
                             vibrate()
                             delay(150)
                             executeMovement(remotePlayer, rollResult)
@@ -392,6 +427,8 @@ fun SnakesAndLaddersGameView(
                         actionBanner = null
                         showWinDialog = false
                         matchRecorded = false
+                        hasPlayedOutcomeAudio = false
+                        soundManager.stopAllSounds()
                         vibrate()
                     }
                 }
@@ -504,6 +541,8 @@ fun SnakesAndLaddersGameView(
                             actionBanner = null
                             showWinDialog = false
                             matchRecorded = false
+                            hasPlayedOutcomeAudio = false
+                            soundManager.stopAllSounds()
                             vibrate()
                         }
                         .testTag("snakes_restart_button"),
@@ -521,15 +560,6 @@ fun SnakesAndLaddersGameView(
         Spacer(modifier = Modifier.height(10.dp))
 
         // --- 2. LIGHTWEIGHT PLAYER POSITION HUD ---
-        if (actionBanner != null) {
-            PlayfulPill(
-                text = actionBanner ?: "",
-                backgroundColor = PlayfulGreen.copy(alpha = 0.15f),
-                textColor = PlayfulGreen
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-        }
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -695,6 +725,30 @@ fun SnakesAndLaddersGameView(
                 ),
                 color = if (canRoll) rollPlayerColor else MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // Contextual Snake & Ladder messages placed immediately below the die
+            if (actionBanner != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val isSnake = actionBanner?.contains("Snake") == true || actionBanner?.contains("🐍") == true
+                val bannerColor = if (isSnake) PlayfulOrange else PlayfulGreen
+                PlayfulPill(
+                    text = actionBanner ?: "",
+                    backgroundColor = bannerColor.copy(alpha = 0.16f),
+                    textColor = bannerColor
+                )
+            }
+        }
+    }
+
+    // Match Outcome Sound (Victory / Defeat)
+    LaunchedEffect(showWinDialog) {
+        if (showWinDialog && !hasPlayedOutcomeAudio) {
+            hasPlayedOutcomeAudio = true
+            when (SnakesAndLaddersSoundManager.resolveOutcomeAudio(gameState.status, selectedMode, localPlayer)) {
+                SnakesOutcomeAudio.VICTORY -> soundManager.playVictory(settings.soundEnabled)
+                SnakesOutcomeAudio.DEFEAT -> soundManager.playDefeat(settings.soundEnabled)
+                SnakesOutcomeAudio.NONE -> {}
+            }
         }
     }
 
@@ -780,6 +834,8 @@ fun SnakesAndLaddersGameView(
                         actionBanner = null
                         showWinDialog = false
                         matchRecorded = false
+                        hasPlayedOutcomeAudio = false
+                        soundManager.stopAllSounds()
                         vibrate()
                         if (isNearbyMode) {
                             multiplayerManager.sendAction("SNAKES_REMATCH", "")

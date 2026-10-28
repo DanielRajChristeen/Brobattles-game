@@ -93,9 +93,26 @@ class SnakesAndLaddersGameEngine(
 
         val playerIndex = player.ordinal
         val currentPos = _state.playerPositions.getOrElse(playerIndex) { 1 }
-        val targetSquare = currentPos + move.diceRoll
 
         val isExtraTurn = (move.diceRoll == 1 || move.diceRoll == 6)
+
+        // Starting rule: A player at starting position (square 1) may begin moving
+        // onto the board only when the dice value is exactly 1. Rolls 2-6 remain at square 1.
+        if (currentPos == 1 && move.diceRoll != 1) {
+            val nextTurnPlayer = if (isExtraTurn) player else getNextPlayer(player)
+            _state = _state.copy(
+                lastDiceRoll = move.diceRoll,
+                lastMovePlayer = player,
+                ladderClimbed = null,
+                snakeSlid = null,
+                wasOvershot = false,
+                extraTurnGranted = isExtraTurn,
+                activePlayer = nextTurnPlayer
+            )
+            return MoveResult.Success(_state)
+        }
+
+        val targetSquare = currentPos + move.diceRoll
 
         // Exact roll rule: if over 100, do not move
         if (targetSquare > SnakesAndLaddersBoard.TOTAL_SQUARES) {
