@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,12 +45,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.core.audio.DotConnectionsSoundManager
 import com.example.core.engine.dotconnections.DotBoardSize
 import com.example.core.engine.dotconnections.DotConnectionsBot
 import com.example.core.engine.dotconnections.DotConnectionsEngine
@@ -85,6 +88,14 @@ fun DotConnectionsGameView(
     val settings by viewModel.settings.collectAsState()
     val colors = ChillTheme.colors
 
+    val context = LocalContext.current
+    val soundManager = remember { DotConnectionsSoundManager(context) }
+    DisposableEffect(soundManager) {
+        onDispose {
+            soundManager.release()
+        }
+    }
+
     val engine = remember(boardSize) { DotConnectionsEngine(boardSize) }
     var gameState by remember(boardSize) { mutableStateOf(engine.state) }
 
@@ -98,6 +109,7 @@ fun DotConnectionsGameView(
     var isBotThinking by remember { mutableStateOf(false) }
     var showExtraTurnBanner by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
+    var hasPlayedOutcomeAudio by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
     var gameSessionId by remember { mutableIntStateOf(0) }
 
@@ -114,6 +126,8 @@ fun DotConnectionsGameView(
         isBotThinking = false
         showExtraTurnBanner = false
         matchRecorded = false
+        hasPlayedOutcomeAudio = false
+        soundManager.stopAllSounds()
         gameSessionId++
         vibrate()
     }
@@ -121,11 +135,17 @@ fun DotConnectionsGameView(
     fun handleUserMove(edge: DotEdge, sendNetwork: Boolean = true) {
         if (isBotThinking || gameState.isGameOver) return
         if (selectedMode == GameMode.SOLO && gameState.activePlayer != DotPlayer.PLAYER_1) return
-        if (isNearbyMode && gameState.activePlayer != localPlayer) return
+        if (isNearbyMode && sendNetwork && gameState.activePlayer != localPlayer) return
 
         val result = engine.makeMove(edge, gameState.activePlayer)
         if (result is DotMoveResult.Success) {
             gameState = result.newState
+            if (result.completedBoxes.isNotEmpty()) {
+                soundManager.playBoxCompletion(result.completedBoxes.size, settings.soundEnabled)
+            } else {
+                soundManager.playConnect(settings.soundEnabled)
+            }
+
             if (result.extraTurn) {
                 showExtraTurnBanner = true
                 vibrate(isBig = true)
@@ -159,6 +179,8 @@ fun DotConnectionsGameView(
                         isBotThinking = false
                         showExtraTurnBanner = false
                         matchRecorded = false
+                        hasPlayedOutcomeAudio = false
+                        soundManager.stopAllSounds()
                         gameSessionId++
                         vibrate()
                     }
@@ -180,6 +202,12 @@ fun DotConnectionsGameView(
                 val result = engine.makeMove(botMove, DotPlayer.PLAYER_2)
                 if (result is DotMoveResult.Success) {
                     gameState = result.newState
+                    if (result.completedBoxes.isNotEmpty()) {
+                        soundManager.playBoxCompletion(result.completedBoxes.size, settings.soundEnabled)
+                    } else {
+                        soundManager.playConnect(settings.soundEnabled)
+                    }
+
                     if (result.extraTurn) {
                         showExtraTurnBanner = true
                         vibrate(isBig = true)
@@ -219,6 +247,22 @@ fun DotConnectionsGameView(
                 winner = winnerName,
                 durationSeconds = 90
             )
+        }
+    }
+
+    // Trigger match outcome audio once per match with clean coordination
+    LaunchedEffect(gameState.isGameOver, gameSessionId) {
+        if (gameState.isGameOver && !hasPlayedOutcomeAudio) {
+            hasPlayedOutcomeAudio = true
+            // Brief delay (~350ms) to allow the final line / box completion chime to ring out cleanly
+            delay(350)
+            val outcome = DotConnectionsSoundManager.resolveOutcomeAudio(
+                winner = gameState.winner,
+                isDraw = gameState.isDraw,
+                mode = selectedMode,
+                localPlayer = localPlayer
+            )
+            soundManager.playOutcome(outcome, settings.soundEnabled)
         }
     }
 

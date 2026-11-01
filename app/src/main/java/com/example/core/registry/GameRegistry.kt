@@ -128,6 +128,24 @@ object GameRegistry {
         imageResLight = com.example.R.drawable.ic_game_checkers_light
     )
 
+    val BATTLESHIP = GameDefinition(
+        id = "battleship",
+        title = "Battleship",
+        subtitle = "Rule the high seas!",
+        description = "Deploy your 5 naval vessels on the 10×10 grid. Fire missiles, sink enemy ships, and earn extra shots for every hit!",
+        emoji = "🚢",
+        statusTag = "LET'S GO! 🚀",
+        isAvailable = true,
+        supportedModes = listOf(GameMode.SOLO, GameMode.LOCAL_1V1, GameMode.BLUETOOTH_1V1),
+        targetScoreOptions = emptyList(),
+        defaultTargetScore = 1,
+        accentHex = 0xFF0284C7, // Ocean Blue
+        secondaryAccentHex = 0xFF38BDF8, // Sky Blue
+        imageRes = com.example.R.drawable.ic_game_battleship,
+        imageResDark = com.example.R.drawable.ic_game_battleship,
+        imageResLight = com.example.R.drawable.ic_game_battleship
+    )
+
     val games: List<GameDefinition> = listOf(
         XO,
         TUG_OF_WAR,
@@ -135,7 +153,8 @@ object GameRegistry {
         CHESS,
         CHECKERS,
         DOT_CONNECTIONS,
-        LUDO
+        LUDO,
+        BATTLESHIP
     )
 
     fun getGameById(id: String): GameDefinition? = games.firstOrNull { it.id.equals(id, ignoreCase = true) }

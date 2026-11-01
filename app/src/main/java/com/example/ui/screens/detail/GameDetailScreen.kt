@@ -85,6 +85,7 @@ import com.example.ui.components.ChunkyButton
 import com.example.ui.components.PlayfulPill
 import com.example.ui.components.bouncyClickable
 import com.example.core.engine.checkers.CheckersDifficulty
+import com.example.ui.screens.detail.battleship.BattleshipGameView
 import com.example.ui.screens.detail.checkers.CheckersGameView
 import com.example.ui.screens.detail.chess.ChessGameView
 import com.example.ui.screens.detail.dotconnections.DotConnectionsGameView
@@ -576,6 +577,20 @@ fun GameDetailScreen(
                         selectedMode = selectedMode,
                         targetScore = targetScore,
                         playerCount = snakesPlayerCount,
+                        viewModel = viewModel,
+                        onChangeMode = {
+                            isPlaying = false
+                            multiplayerManager.disconnect()
+                        },
+                        onExit = {
+                            multiplayerManager.disconnect()
+                            onBack()
+                        }
+                    )
+                }
+                game.id.equals("battleship", ignoreCase = true) -> {
+                    BattleshipGameView(
+                        selectedMode = selectedMode,
                         viewModel = viewModel,
                         onChangeMode = {
                             isPlaying = false
@@ -1378,6 +1393,7 @@ private fun CleanLaunchView(
         // Chunky Instant Play Button
         val playButtonText = when {
             game.id.equals("chess", ignoreCase = true) -> "PLAY ♟️"
+            game.id.equals("battleship", ignoreCase = true) -> "PLAY 🚢"
             else -> "PLAY 🎮"
         }
         ChunkyButton(
