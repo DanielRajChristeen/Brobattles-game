@@ -86,6 +86,89 @@ class CheckersSoundManager(private val context: Context) {
             }
             return bytes
         }
+        fun generateWoodClickSound(
+            sampleRate: Int = SAMPLE_RATE,
+            basePitch: Double = 320.0,
+            durationMs: Int = 60,
+            volume: Double = 0.85
+        ): ByteArray {
+            val totalSamples = (sampleRate * (durationMs / 1000.0)).toInt()
+            val pcmShorts = ShortArray(totalSamples)
+            val random = java.util.Random(1337)
+
+            for (i in 0 until totalSamples) {
+                val t = i.toDouble() / sampleRate
+                // Sharp initial transient impulse (wood impact click within first 3ms)
+                val clickSamples = (sampleRate * 0.003).toInt()
+                val clickNoise = if (i < clickSamples) {
+                    val progress = i.toDouble() / clickSamples
+                    (random.nextDouble() * 2.0 - 1.0) * (1.0 - progress) * 0.65
+                } else 0.0
+
+                // Quick acoustic wood damping decay
+                val decay = kotlin.math.exp(-t * 90.0)
+
+                // Resonant wood body modes: fundamental cavity (~320Hz) + wood harmonic (~740Hz) + high overtone (~1440Hz)
+                val body = sin(2.0 * PI * basePitch * t) * 0.60 +
+                           sin(2.0 * PI * (basePitch * 2.31) * t) * 0.30 +
+                           sin(2.0 * PI * (basePitch * 4.5) * t) * 0.10
+
+                val sample = ((body * decay) + clickNoise) * volume * Short.MAX_VALUE
+                pcmShorts[i] = sample.coerceIn(Short.MIN_VALUE.toDouble(), Short.MAX_VALUE.toDouble()).toInt().toShort()
+            }
+
+            val bytes = ByteArray(pcmShorts.size * 2)
+            for (i in pcmShorts.indices) {
+                val s = pcmShorts[i].toInt()
+                bytes[i * 2] = (s and 0xFF).toByte()
+                bytes[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+            }
+            return bytes
+        }
+
+        fun generateWoodCaptureSound(
+            sampleRate: Int = SAMPLE_RATE,
+            durationMs: Int = 110,
+            volume: Double = 0.90
+        ): ByteArray {
+            val totalSamples = (sampleRate * (durationMs / 1000.0)).toInt()
+            val pcmShorts = ShortArray(totalSamples)
+            val random = java.util.Random(999)
+
+            val strike2Sample = (sampleRate * 0.022).toInt()
+
+            for (i in 0 until totalSamples) {
+                val t = i.toDouble() / sampleRate
+
+                // Primary wood piece strike
+                val decay1 = kotlin.math.exp(-t * 70.0)
+                val click1 = if (i < (sampleRate * 0.004).toInt()) {
+                    (random.nextDouble() * 2.0 - 1.0) * (1.0 - i.toDouble() / (sampleRate * 0.004)) * 0.70
+                } else 0.0
+                val body1 = (sin(2.0 * PI * 250.0 * t) * 0.65 + sin(2.0 * PI * 590.0 * t) * 0.35) * decay1 + click1
+
+                // Secondary rebound wood knock
+                val body2 = if (i >= strike2Sample) {
+                    val t2 = (i - strike2Sample).toDouble() / sampleRate
+                    val decay2 = kotlin.math.exp(-t2 * 95.0)
+                    val click2 = if (i - strike2Sample < (sampleRate * 0.003).toInt()) {
+                        (random.nextDouble() * 2.0 - 1.0) * (1.0 - (i - strike2Sample).toDouble() / (sampleRate * 0.003)) * 0.45
+                    } else 0.0
+                    ((sin(2.0 * PI * 360.0 * t2) * 0.70 + sin(2.0 * PI * 780.0 * t2) * 0.30) * decay2 + click2) * 0.80
+                } else 0.0
+
+                val sample = (body1 + body2) * volume * Short.MAX_VALUE
+                pcmShorts[i] = sample.coerceIn(Short.MIN_VALUE.toDouble(), Short.MAX_VALUE.toDouble()).toInt().toShort()
+            }
+
+            val bytes = ByteArray(pcmShorts.size * 2)
+            for (i in pcmShorts.indices) {
+                val s = pcmShorts[i].toInt()
+                bytes[i * 2] = (s and 0xFF).toByte()
+                bytes[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+            }
+            return bytes
+        }
     }
 
     init {
@@ -96,20 +179,11 @@ class CheckersSoundManager(private val context: Context) {
     private fun initializeAudio() {
         if (isInitialized) return
         try {
-            // Coin move / tap: crisp wooden click
-            val coinNotes = listOf(
-                Pair(480.0, 20),
-                Pair(640.0, 35)
-            )
-            coinMoveTrack = createAudioTrack(generateToneSequence(coinNotes, volume = 0.55))
+            // Coin move / tap: authentic crisp acoustic wooden click
+            coinMoveTrack = createAudioTrack(generateWoodClickSound(volume = 0.88))
 
-            // Capture sound: bouncy punchy snap
-            val captureNotes = listOf(
-                Pair(320.0, 30),
-                Pair(480.0, 40),
-                Pair(760.0, 60)
-            )
-            captureTrack = createAudioTrack(generateToneSequence(captureNotes, volume = 0.7))
+            // Capture sound: solid two-piece wooden impact clack
+            captureTrack = createAudioTrack(generateWoodCaptureSound(volume = 0.92))
 
             // King promotion sound: regal ascending royal fanfare
             val kingNotes = listOf(

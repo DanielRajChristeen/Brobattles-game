@@ -202,7 +202,10 @@ fun CheckersGameView(
         val res = engine.makeMove(move)
         if (res.success) {
             gameState = engine.state
-            selectedSquare = if (res.multiJumpAvailable) res.multiJumpAvailable.let { move.to } else null
+            val isHumanTurn = (selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_1) ||
+                (isNearbyMode && gameState.activePlayer == localPlayer) ||
+                (selectedMode == GameMode.LOCAL_1V1)
+            selectedSquare = if (res.multiJumpAvailable && isHumanTurn) move.to else null
 
             // Sound and haptic effects based on move type
             if (res.isKingPromotion) {
@@ -228,7 +231,7 @@ fun CheckersGameView(
         }
     }
 
-    // Bot move execution in Solo mode
+    // Bot move execution in Solo mode (with full multiple jump continuation support)
     LaunchedEffect(gameState.activePlayer, gameState.status, selectedMode, matchId) {
         val isBotTurn = selectedMode == GameMode.SOLO &&
             gameState.activePlayer == PlayerId.PLAYER_2 &&
@@ -236,10 +239,21 @@ fun CheckersGameView(
 
         if (isBotTurn) {
             isBotThinking = true
-            delay(500)
-            val botMove = CheckersBot.decideMove(gameState, difficulty, PlayerId.PLAYER_2)
-            if (botMove != null) {
+            while (
+                engine.state.activePlayer == PlayerId.PLAYER_2 &&
+                engine.state.status is GameStatus.InProgress
+            ) {
+                val isContinuingJump = engine.state.mustContinueJumpingFrom != null
+                delay(if (isContinuingJump) 650 else 500)
+
+                val currentGameState = engine.state
+                val botMove = CheckersBot.decideMove(currentGameState, difficulty, PlayerId.PLAYER_2) ?: break
                 executeMove(botMove)
+
+                // If no further jump is forced for this piece, the bot's turn is complete
+                if (engine.state.mustContinueJumpingFrom == null) {
+                    break
+                }
             }
             isBotThinking = false
         }
@@ -459,7 +473,7 @@ fun CheckersGameView(
                     piecesRemaining = gameState.redPiecesRemaining,
                     kingsCount = gameState.redKings,
                     isActiveTurn = gameState.activePlayer == PlayerId.PLAYER_1 && gameState.status is GameStatus.InProgress,
-                    indicatorColor = Color(0xFFDC2626),
+                    indicatorColor = Color(0xFFB93815),
                     modifier = Modifier.weight(1f)
                 )
 
@@ -469,7 +483,7 @@ fun CheckersGameView(
                     piecesRemaining = gameState.blackPiecesRemaining,
                     kingsCount = gameState.blackKings,
                     isActiveTurn = gameState.activePlayer == PlayerId.PLAYER_2 && gameState.status is GameStatus.InProgress,
-                    indicatorColor = Color(0xFF1E293B),
+                    indicatorColor = Color(0xFF292420),
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -839,8 +853,8 @@ private fun CheckersStatusBanner(
     }
 
     val bannerText = when {
-        isBotThinking -> "🤖 BOT IS THINKING... 💭"
-        state.mustContinueJumpingFrom != null -> "⚡ MULTI-JUMP! KEEP JUMPING"
+        isBotThinking -> if (state.mustContinueJumpingFrom != null) "🤖 BOT MULTI-JUMPING! ⚡" else "🤖 BOT IS THINKING... 💭"
+        state.mustContinueJumpingFrom != null -> if (isMyTurn) "⚡ MULTI-JUMP! KEEP JUMPING" else "🤖 BOT MULTI-JUMPING! ⚡"
         hasMandatoryCaptures -> "⚔️ MANDATORY CAPTURE REQUIRED!"
         selectedMode == GameMode.SOLO -> if (isMyTurn) "🔴 YOUR TURN (RED)" else "⚫ BOT'S TURN"
         isNearbyMode -> if (isMyTurn) "🟢 YOUR TURN (${localPlayer.displayName.uppercase()})" else "⏳ OPPONENT'S TURN"

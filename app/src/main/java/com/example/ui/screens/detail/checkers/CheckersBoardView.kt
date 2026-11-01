@@ -45,12 +45,21 @@ private val BoardWoodFrame = Color(0xFF2B1D16)
 private val SelectedSquareHighlight = Color(0xFFFBBF24) // Amber
 private val LegalMoveColor = Color(0xFF10B981) // Green
 private val LegalJumpColor = Color(0xFFEF4444) // Red
-private val RedPiecePrimary = Color(0xFFDC2626)
-private val RedPieceSecondary = Color(0xFF991B1B)
-private val RedPieceHighlight = Color(0xFFF87171)
-private val BlackPiecePrimary = Color(0xFF27272A)
-private val BlackPieceSecondary = Color(0xFF18181B)
-private val BlackPieceHighlight = Color(0xFF52525B)
+
+// Wooden Red Pieces (Cherry / Padauk Timber)
+private val WoodRedHighlight = Color(0xFFE56A44)
+private val WoodRedPrimary = Color(0xFFB93815)
+private val WoodRedSecondary = Color(0xFF7A1D08)
+private val WoodRedDarkBorder = Color(0xFF451005)
+private val WoodRedGrain = Color(0xFF9E2A0C)
+
+// Wooden Black Pieces (Dark Walnut / Aged Ebony Timber)
+private val WoodBlackHighlight = Color(0xFF574E47)
+private val WoodBlackPrimary = Color(0xFF292420)
+private val WoodBlackSecondary = Color(0xFF171310)
+private val WoodBlackDarkBorder = Color(0xFF090706)
+private val WoodBlackGrain = Color(0xFF201B17)
+
 private val CrownGold = Color(0xFFFBBF24)
 
 @Composable
@@ -218,66 +227,94 @@ private fun DrawScope.drawCheckersPiece(
     radius: Float
 ) {
     val isRed = piece.player == PlayerId.PLAYER_1
-    val baseColor = if (isRed) RedPiecePrimary else BlackPiecePrimary
-    val darkColor = if (isRed) RedPieceSecondary else BlackPieceSecondary
-    val highlightColor = if (isRed) RedPieceHighlight else BlackPieceHighlight
+    val highlightColor = if (isRed) WoodRedHighlight else WoodBlackHighlight
+    val primaryColor = if (isRed) WoodRedPrimary else WoodBlackPrimary
+    val secondaryColor = if (isRed) WoodRedSecondary else WoodBlackSecondary
+    val darkBorderColor = if (isRed) WoodRedDarkBorder else WoodBlackDarkBorder
+    val grainColor = if (isRed) WoodRedGrain else WoodBlackGrain
 
-    // Drop shadow
+    // 1. Soft ambient & directional drop shadow onto wooden board
     drawCircle(
         color = Color(0x66000000),
-        radius = radius,
-        center = center + Offset(2f, 4f)
+        radius = radius * 0.98f,
+        center = center + Offset(2f, 3.5f)
     )
 
-    // Outer rim 3D bevel gradient
+    // 2. Lathe-turned wooden piece body with radial grain gradient
     drawCircle(
         brush = Brush.radialGradient(
-            colors = listOf(highlightColor, baseColor, darkColor),
-            center = center - Offset(radius * 0.25f, radius * 0.25f),
-            radius = radius * 1.2f
+            colors = listOf(highlightColor, primaryColor, secondaryColor),
+            center = center - Offset(radius * 0.28f, radius * 0.28f),
+            radius = radius * 1.3f
         ),
         radius = radius,
         center = center
     )
 
-    // Outer edge border
+    // 3. Subtle concentric wood growth rings
     drawCircle(
-        color = if (isRed) Color(0xFF7F1D1D) else Color(0xFF09090B),
+        color = grainColor.copy(alpha = 0.35f),
+        radius = radius * 0.88f,
+        center = center,
+        style = Stroke(width = 1.dp.toPx())
+    )
+    drawCircle(
+        color = highlightColor.copy(alpha = 0.25f),
+        radius = radius * 0.82f,
+        center = center - Offset(radius * 0.05f, radius * 0.05f),
+        style = Stroke(width = 0.8.dp.toPx())
+    )
+
+    // 4. Outer chamfered edge dark burnish border
+    drawCircle(
+        color = darkBorderColor,
         radius = radius,
         center = center,
-        style = Stroke(width = 1.8.dp.toPx())
+        style = Stroke(width = 1.6.dp.toPx())
     )
 
-    // Inner concentric ridge 1
+    // 5. Traditional carved lathe-turned circular groove (outer ring recess)
     drawCircle(
-        color = highlightColor.copy(alpha = 0.5f),
-        radius = radius * 0.74f,
+        color = darkBorderColor.copy(alpha = 0.85f),
+        radius = radius * 0.72f,
         center = center,
-        style = Stroke(width = 1.5.dp.toPx())
+        style = Stroke(width = 2.2.dp.toPx())
+    )
+    drawCircle(
+        color = highlightColor.copy(alpha = 0.40f),
+        radius = radius * 0.68f,
+        center = center,
+        style = Stroke(width = 1.0.dp.toPx())
     )
 
-    // Inner plateau
+    // 6. Recessed center wooden dish
     drawCircle(
         brush = Brush.radialGradient(
-            colors = listOf(baseColor, darkColor),
-            center = center,
-            radius = radius * 0.7f
+            colors = listOf(primaryColor, secondaryColor, darkBorderColor),
+            center = center + Offset(radius * 0.1f, radius * 0.1f),
+            radius = radius * 0.75f
         ),
-        radius = radius * 0.65f,
+        radius = radius * 0.62f,
         center = center
     )
 
-    // Inner concentric ridge 2
+    // 7. Inner fine lathe bead / ring
     drawCircle(
-        color = darkColor,
-        radius = radius * 0.50f,
+        color = grainColor.copy(alpha = 0.50f),
+        radius = radius * 0.46f,
         center = center,
-        style = Stroke(width = 1.5.dp.toPx())
+        style = Stroke(width = 1.2.dp.toPx())
+    )
+    drawCircle(
+        color = highlightColor.copy(alpha = 0.25f),
+        radius = radius * 0.32f,
+        center = center,
+        style = Stroke(width = 0.8.dp.toPx())
     )
 
-    // If crowned King, draw golden royal crown
+    // 8. If crowned King, draw golden royal crown
     if (piece.isKing) {
-        drawCrown(center = center, size = radius * 0.75f)
+        drawCrown(center = center, size = radius * 0.72f)
     }
 }
 

@@ -245,6 +245,155 @@ class CheckersEngineTest {
     }
 
     @Test
+    fun testBotMultiJumpSequenceRegularPiece() {
+        val engine = CheckersEngine()
+        val botPiece = CheckersPiece(101, PlayerId.PLAYER_2, isKing = false)
+        val redPiece1 = CheckersPiece(1, PlayerId.PLAYER_1, isKing = false)
+        val redPiece2 = CheckersPiece(2, PlayerId.PLAYER_1, isKing = false)
+
+        // Bot is at (1, 2)
+        // Red 1 is at (2, 3) -> jump lands on (3, 4)
+        // Red 2 is at (4, 5) -> jump lands on (5, 6)
+        val board = mapOf(
+            CheckersSquare(1, 2) to botPiece,
+            CheckersSquare(2, 3) to redPiece1,
+            CheckersSquare(4, 5) to redPiece2
+        )
+
+        engine.syncState(
+            CheckersGameState(
+                board = board,
+                activePlayer = PlayerId.PLAYER_2,
+                status = GameStatus.InProgress
+            )
+        )
+
+        // Step 1: Bot decides first jump
+        val move1 = CheckersBot.decideMove(engine.state, CheckersDifficulty.EASY, PlayerId.PLAYER_2)
+        assertNotNull(move1)
+        assertEquals(CheckersSquare(1, 2), move1!!.from)
+        assertEquals(CheckersSquare(3, 4), move1.to)
+
+        val res1 = engine.makeMove(move1)
+        assertTrue(res1.success)
+        assertTrue(res1.isCapture)
+        assertTrue(res1.multiJumpAvailable)
+        assertEquals(PlayerId.PLAYER_2, engine.state.activePlayer)
+        assertEquals(CheckersSquare(3, 4), engine.state.mustContinueJumpingFrom)
+
+        // Step 2: Bot decides second jump
+        val move2 = CheckersBot.decideMove(engine.state, CheckersDifficulty.EASY, PlayerId.PLAYER_2)
+        assertNotNull(move2)
+        assertEquals(CheckersSquare(3, 4), move2!!.from)
+        assertEquals(CheckersSquare(5, 6), move2.to)
+
+        val res2 = engine.makeMove(move2)
+        assertTrue(res2.success)
+        assertTrue(res2.isCapture)
+        assertFalse(res2.multiJumpAvailable)
+        assertNull(engine.state.mustContinueJumpingFrom)
+        // Turn completed: Player 1 now active
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+        assertNotNull(engine.state.board[CheckersSquare(5, 6)])
+        assertNull(engine.state.board[CheckersSquare(2, 3)])
+        assertNull(engine.state.board[CheckersSquare(4, 5)])
+    }
+
+    @Test
+    fun testKingMultiJumpBackwardsAndForwards() {
+        val engine = CheckersEngine()
+        val botKing = CheckersPiece(102, PlayerId.PLAYER_2, isKing = true)
+        val redPiece1 = CheckersPiece(1, PlayerId.PLAYER_1, isKing = false)
+        val redPiece2 = CheckersPiece(2, PlayerId.PLAYER_1, isKing = false)
+
+        // King is at (3, 4) on dark square (3+4=7)
+        // Red 1 is at (2, 3) -> backward jump for Player 2 lands on (1, 2)
+        // Red 2 is at (2, 1) -> forward jump from (1, 2) lands on (3, 0)
+        val board = mapOf(
+            CheckersSquare(3, 4) to botKing,
+            CheckersSquare(2, 3) to redPiece1,
+            CheckersSquare(2, 1) to redPiece2
+        )
+
+        engine.syncState(
+            CheckersGameState(
+                board = board,
+                activePlayer = PlayerId.PLAYER_2,
+                status = GameStatus.InProgress
+            )
+        )
+
+        val move1 = CheckersBot.decideMove(engine.state, CheckersDifficulty.MEDIUM, PlayerId.PLAYER_2)
+        assertNotNull(move1)
+        assertEquals(CheckersSquare(3, 4), move1!!.from)
+        assertEquals(CheckersSquare(1, 2), move1.to)
+
+        val res1 = engine.makeMove(move1)
+        assertTrue(res1.success)
+        assertTrue(res1.multiJumpAvailable)
+        assertEquals(CheckersSquare(1, 2), engine.state.mustContinueJumpingFrom)
+
+        val move2 = CheckersBot.decideMove(engine.state, CheckersDifficulty.MEDIUM, PlayerId.PLAYER_2)
+        assertNotNull(move2)
+        assertEquals(CheckersSquare(1, 2), move2!!.from)
+        assertEquals(CheckersSquare(3, 0), move2.to)
+
+        val res2 = engine.makeMove(move2)
+        assertTrue(res2.success)
+        assertFalse(res2.multiJumpAvailable)
+        assertNull(engine.state.mustContinueJumpingFrom)
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+        assertNotNull(engine.state.board[CheckersSquare(3, 0)])
+        assertNull(engine.state.board[CheckersSquare(2, 3)])
+        assertNull(engine.state.board[CheckersSquare(2, 1)])
+    }
+
+    @Test
+    fun testKingPromotionEndsTurnEvenIfSubsequentJumpExistsForKing() {
+        val engine = CheckersEngine()
+        val regularBlack = CheckersPiece(103, PlayerId.PLAYER_2, isKing = false)
+        val redPiece1 = CheckersPiece(1, PlayerId.PLAYER_1, isKing = false)
+        val redPiece2 = CheckersPiece(2, PlayerId.PLAYER_1, isKing = false)
+
+        // Black at (5, 2) jumps over Red at (6, 3) landing on (7, 4) [King promotion rank!]
+        // Even if Red at (6, 5) exists, reaching king row crowns the piece and immediately ends the turn.
+        val board = mapOf(
+            CheckersSquare(5, 2) to regularBlack,
+            CheckersSquare(6, 3) to redPiece1,
+            CheckersSquare(6, 5) to redPiece2
+        )
+
+        engine.syncState(
+            CheckersGameState(
+                board = board,
+                activePlayer = PlayerId.PLAYER_2,
+                status = GameStatus.InProgress
+            )
+        )
+
+        val move = CheckersMove(CheckersSquare(5, 2), CheckersSquare(7, 4), capturedSquare = CheckersSquare(6, 3))
+        val res = engine.makeMove(move)
+
+        assertTrue(res.success)
+        assertTrue(res.isKingPromotion)
+        assertFalse(res.multiJumpAvailable)
+        assertNull(engine.state.mustContinueJumpingFrom)
+        assertEquals(PlayerId.PLAYER_1, engine.state.activePlayer)
+        assertTrue(engine.state.board[CheckersSquare(7, 4)]?.isKing == true)
+    }
+
+    @Test
+    fun testWoodenSoundSynthesis() {
+        val woodClickPcm = com.example.core.audio.CheckersSoundManager.generateWoodClickSound()
+        assertTrue(woodClickPcm.isNotEmpty())
+        assertTrue(woodClickPcm.any { it != 0.toByte() })
+
+        val woodCapturePcm = com.example.core.audio.CheckersSoundManager.generateWoodCaptureSound()
+        assertTrue(woodCapturePcm.isNotEmpty())
+        assertTrue(woodCapturePcm.any { it != 0.toByte() })
+    }
+
+    @Test
     fun testCheckersSoundSynthesisAndVibrations() {
         // Test coin tap tone generation
         val coinNotes = listOf(480.0 to 20, 640.0 to 35)
