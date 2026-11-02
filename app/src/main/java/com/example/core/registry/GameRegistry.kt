@@ -142,8 +142,8 @@ object GameRegistry {
         accentHex = 0xFF0284C7, // Ocean Blue
         secondaryAccentHex = 0xFF38BDF8, // Sky Blue
         imageRes = com.example.R.drawable.ic_game_battleship,
-        imageResDark = com.example.R.drawable.ic_game_battleship,
-        imageResLight = com.example.R.drawable.ic_game_battleship
+        imageResDark = com.example.R.drawable.ic_game_battleship_dark,
+        imageResLight = com.example.R.drawable.ic_game_battleship_light
     )
 
     val games: List<GameDefinition> = listOf(

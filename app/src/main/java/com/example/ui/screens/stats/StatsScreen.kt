@@ -3,7 +3,9 @@ package com.example.ui.screens.stats
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import com.example.ui.theme.ChillTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -339,13 +341,16 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                     .background(accentColor.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                if (gameDef?.imageRes != null) {
+                val isDark = ChillTheme.colors.isDark
+                val iconRes = gameDef?.iconRes(isDark)
+                if (iconRes != null) {
                     Image(
-                        painter = painterResource(id = gameDef.imageRes),
+                        painter = painterResource(id = iconRes),
                         contentDescription = gameDef.title,
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
                     )
                 } else {
                     Text(text = gameDef?.emoji ?: "🎮", fontSize = 20.sp)

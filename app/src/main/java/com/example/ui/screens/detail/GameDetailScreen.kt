@@ -12,7 +12,9 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import com.example.ui.theme.ChillTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -775,14 +777,17 @@ private fun CleanLaunchView(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            if (game.imageRes != null) {
+            val isDark = ChillTheme.colors.isDark
+            val currentIcon = game.iconRes(isDark)
+            if (currentIcon != null) {
                 Image(
-                    painter = painterResource(id = game.imageRes),
+                    painter = painterResource(id = currentIcon),
                     contentDescription = game.title,
                     modifier = Modifier
                         .padding(end = 14.dp)
                         .size(56.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(14.dp)),
+                    contentScale = ContentScale.Crop
                 )
             } else {
                 Text(
