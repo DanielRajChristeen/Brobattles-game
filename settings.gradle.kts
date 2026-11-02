@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Wifi play"
+rootProject.name = "BroBattle"
 
 include(":app")

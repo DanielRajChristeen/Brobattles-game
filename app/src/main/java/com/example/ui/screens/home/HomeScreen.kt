@@ -179,14 +179,14 @@ private fun PlayfulSimpleHeader(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(id = R.drawable.app_icon),
-                    contentDescription = "Wifi play Logo",
+                    contentDescription = "BroBattle Logo",
                     modifier = Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(8.dp))
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "WIFI PLAY",
+                    text = "BROBATTLE",
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontWeight = FontWeight.Black,
                         letterSpacing = 1.sp

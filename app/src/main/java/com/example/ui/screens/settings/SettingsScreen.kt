@@ -117,7 +117,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.width(14.dp))
             Column {
                 Text(
-                    text = "Wifi Play Settings ⚙️",
+                    text = "BroBattle Settings ⚙️",
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.Black
                     ),
@@ -612,7 +612,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Help improve Wifi play",
+                            text = "Help improve BroBattle",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -640,7 +640,7 @@ fun SettingsScreen(
                                     onRewardEarned = {
                                         Toast.makeText(
                                             context,
-                                            "Thanks for supporting Wifi play! 🍵",
+                                            "Thanks for supporting BroBattle! 🍵",
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     },

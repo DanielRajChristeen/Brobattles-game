@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/app_icon"
+        android:drawable="@drawable/brobattle_launcher_fg"
         android:gravity="center" />
 </layer-list>

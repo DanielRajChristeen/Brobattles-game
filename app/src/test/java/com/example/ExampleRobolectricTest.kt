@@ -28,7 +28,7 @@ class ExampleRobolectricTest {
   fun `read string from context`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
-    assertEquals("Wifi play", appName)
+    assertEquals("BroBattle", appName)
   }
 
   @Test
@@ -72,11 +72,16 @@ class ExampleRobolectricTest {
     assertEquals(R.drawable.ic_game_dots_dark, dotConnections.iconRes(isDark = true))
     assertEquals(R.drawable.ic_game_dots_light, dotConnections.iconRes(isDark = false))
 
-    // Verify dark vs light icon switching for XO and Chess
+    // Verify dark vs light icon switching for XO, Chess, and Battleship
     assertEquals(R.drawable.ic_game_xo_dark, xo.iconRes(isDark = true))
     assertEquals(R.drawable.ic_game_xo_light, xo.iconRes(isDark = false))
     assertEquals(R.drawable.ic_game_chess_dark, chess.iconRes(isDark = true))
     assertEquals(R.drawable.ic_game_chess_light, chess.iconRes(isDark = false))
+
+    val battleship = GameRegistry.getGameById("battleship")
+    assertNotNull(battleship)
+    assertEquals(R.drawable.ic_game_battleship_dark, battleship!!.iconRes(isDark = true))
+    assertEquals(R.drawable.ic_game_battleship_light, battleship.iconRes(isDark = false))
 
     val archery = GameRegistry.getGameById("archery")
     assertNull(archery)
