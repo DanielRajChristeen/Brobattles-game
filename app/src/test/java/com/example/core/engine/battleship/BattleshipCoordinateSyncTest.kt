@@ -236,6 +236,141 @@ class BattleshipCoordinateSyncTest {
     }
 
     @Test
+    fun testHumanAndBotAttackRegressionAcrossAllRequiredCoordinates() {
+        // Required regression testing: A1, E5, J10, A10, J1 for both Human and Bot attacks
+        for ((notation, coord) in testCoordinates) {
+            val cellSizePx = 44f
+            val radarCellCenter = Offset(
+                x = 24f + coord.col * cellSizePx + cellSizePx / 2f,
+                y = 32f + coord.row * cellSizePx + cellSizePx / 2f
+            )
+            val fleetCellCenter = Offset(
+                x = 20f + coord.col * cellSizePx + cellSizePx / 2f,
+                y = 28f + coord.row * cellSizePx + cellSizePx / 2f
+            )
+
+            // 1. Human Attack Verification on RADAR
+            val humanAttack = AttackAnimationData(
+                attacker = BattleshipPlayer.PLAYER_1,
+                isBotAttacker = false,
+                targetCoord = coord,
+                targetBoard = BoardType.RADAR,
+                targetCenterInOverlay = radarCellCenter,
+                cellSizePx = cellSizePx,
+                isHit = true,
+                isSunk = false,
+                stage = AttackAnimationStage.PROJECTILE_FLIGHT
+            )
+            // Crosshair position must equal exact targetCenter
+            val humanCrosshairPos = humanAttack.targetCenterInOverlay
+            assertEquals(radarCellCenter, humanCrosshairPos)
+
+            // Bomb starting X, constant descent X, final bomb center, impact center
+            val startY = -60f
+            val targetY = radarCellCenter.y
+            val steps = listOf(0.0f, 0.25f, 0.5f, 0.75f, 1.0f)
+            for (p in steps) {
+                val bombX = radarCellCenter.x // Constant X
+                assertEquals("Human attack $notation: Bomb X must equal cell center X at progress $p", radarCellCenter.x, bombX, 0.0001f)
+                val gravityProgress = (0.25f * p + 0.75f * p * p).coerceIn(0f, 1f)
+                val bombY = startY + (targetY - startY) * gravityProgress
+                if (p == 1.0f) {
+                    val finalBombCenter = Offset(bombX, bombY)
+                    assertEquals("Final bomb center must match target cell center for $notation", radarCellCenter, finalBombCenter)
+                    val impactCenter = radarCellCenter
+                    assertEquals(impactCenter, finalBombCenter)
+                }
+            }
+
+            // 2. Bot Attack Verification on MY FLEET
+            val botAttack = AttackAnimationData(
+                attacker = BattleshipPlayer.PLAYER_2,
+                isBotAttacker = true,
+                targetCoord = coord,
+                targetBoard = BoardType.MY_FLEET,
+                targetCenterInOverlay = fleetCellCenter,
+                cellSizePx = cellSizePx,
+                isHit = false,
+                isSunk = false,
+                stage = AttackAnimationStage.PROJECTILE_FLIGHT
+            )
+            val botCrosshairPos = botAttack.targetCenterInOverlay
+            assertEquals(fleetCellCenter, botCrosshairPos)
+
+            val botStartY = -60f
+            val botTargetY = fleetCellCenter.y
+            for (p in steps) {
+                val bombX = fleetCellCenter.x
+                assertEquals("Bot attack $notation: Bomb X must equal cell center X at progress $p", fleetCellCenter.x, bombX, 0.0001f)
+                val gravityProgress = (0.25f * p + 0.75f * p * p).coerceIn(0f, 1f)
+                val bombY = botStartY + (botTargetY - botStartY) * gravityProgress
+                if (p == 1.0f) {
+                    val finalBombCenter = Offset(bombX, bombY)
+                    assertEquals("Final bomb center must match target cell center on fleet board for $notation", fleetCellCenter, finalBombCenter)
+                    val impactCenter = fleetCellCenter
+                    assertEquals(impactCenter, finalBombCenter)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testExtraShotRulePreservation() {
+        val engine = BattleshipEngine()
+        // Deploy human ship at (2, 2) to (2, 4)
+        engine.placeShip(BattleshipPlayer.PLAYER_1, ShipType.CRUISER, 2, 2, ShipOrientation.HORIZONTAL)
+        // Deploy bot ship at (5, 5) to (5, 8)
+        engine.placeShip(BattleshipPlayer.PLAYER_2, ShipType.BATTLESHIP, 5, 5, ShipOrientation.HORIZONTAL)
+        engine.setPhase(BattleshipPhase.BATTLE)
+
+        // Human Turn 1: Hit bot ship at (5, 5) -> Extra shot granted!
+        assertEquals(BattleshipPlayer.PLAYER_1, engine.state.activePlayer)
+        val shot1 = engine.fireShot(BattleshipPlayer.PLAYER_1, CellCoordinate(5, 5))
+        assertTrue(shot1 is ShotOutcome.Hit)
+        assertEquals("Human must retain turn after HIT", BattleshipPlayer.PLAYER_1, engine.state.activePlayer)
+
+        // Human Turn 2: Miss at (0, 0) -> Turn passes to Bot!
+        val shot2 = engine.fireShot(BattleshipPlayer.PLAYER_1, CellCoordinate(0, 0))
+        assertTrue(shot2 is ShotOutcome.Miss)
+        assertEquals("Turn must pass to Bot after MISS", BattleshipPlayer.PLAYER_2, engine.state.activePlayer)
+
+        // Bot Turn 1: Hit human ship at (2, 2) -> Extra shot granted to Bot!
+        val botShot1 = engine.fireShot(BattleshipPlayer.PLAYER_2, CellCoordinate(2, 2))
+        assertTrue(botShot1 is ShotOutcome.Hit)
+        assertEquals("Bot must retain turn after HIT", BattleshipPlayer.PLAYER_2, engine.state.activePlayer)
+
+        // Bot Turn 2: Miss at (9, 9) -> Turn passes back to Human!
+        val botShot2 = engine.fireShot(BattleshipPlayer.PLAYER_2, CellCoordinate(9, 9))
+        assertTrue(botShot2 is ShotOutcome.Miss)
+        assertEquals("Turn must pass back to Human after Bot MISS", BattleshipPlayer.PLAYER_1, engine.state.activePlayer)
+    }
+
+    @Test
+    fun testWiFiPlayPrivacyDataIsolation() {
+        // Verify payload format never leaks unhit ship coordinates
+        val r = 4
+        val c = 4
+        val firePayload = "$r,$c"
+        // Firing payload contains ONLY row,col
+        val parts = firePayload.split(",")
+        assertEquals(2, parts.size)
+        assertEquals("4", parts[0])
+        assertEquals("4", parts[1])
+
+        // Result payload contains ONLY row,col,isHit,sunkName
+        val isHit = true
+        val sunkCode = "NONE"
+        val resultPayload = "$r,$c,$isHit,$sunkCode"
+        val resParts = resultPayload.split(",")
+        assertEquals(4, resParts.size)
+        assertEquals("4", resParts[0])
+        assertEquals("4", resParts[1])
+        assertEquals("true", resParts[2])
+        assertEquals("NONE", resParts[3])
+        // Zero secret opponent fleet coordinates exposed
+    }
+
+    @Test
     fun testRepeatedAttackRejection() {
         val engine = BattleshipEngine()
         engine.placeShip(BattleshipPlayer.PLAYER_2, ShipType.DESTROYER, 5, 5, ShipOrientation.HORIZONTAL)

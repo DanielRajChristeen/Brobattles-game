@@ -84,16 +84,27 @@ class BattleshipBot {
      * Never fires at an already targeted cell.
      */
     fun decideMove(radar: TargetingRadar): CellCoordinate {
-        // If there are active unsunk hits, execute TARGET MODE
-        if (activeHits.isNotEmpty()) {
-            val targetMove = decideTargetMove(radar)
-            if (targetMove != null) {
-                return targetMove
+        try {
+            // If there are active unsunk hits, execute TARGET MODE
+            if (activeHits.isNotEmpty()) {
+                val targetMove = decideTargetMove(radar)
+                if (targetMove != null) {
+                    return targetMove
+                }
             }
-        }
 
-        // Otherwise, execute HUNT MODE
-        return decideHuntMove(radar)
+            // Otherwise, execute HUNT MODE
+            return decideHuntMove(radar)
+        } catch (_: Exception) {
+            // Absolute fallback: pick first cell not yet fired at
+            for (r in 0 until 10) {
+                for (c in 0 until 10) {
+                    val coord = CellCoordinate(r, c)
+                    if (!radar.hasFiredAt(coord)) return coord
+                }
+            }
+            return CellCoordinate(0, 0)
+        }
     }
 
     /**
@@ -115,11 +126,11 @@ class BattleshipBot {
                 val maxCol = cluster.maxOf { it.col }
 
                 // Try extending left (col - 1)
-                val left = CellCoordinate(row, minCol - 1).takeIf { minCol > 0 && !radar.hasFiredAt(it) }
+                val left = if (minCol > 0) CellCoordinate(row, minCol - 1).takeIf { !radar.hasFiredAt(it) } else null
                 if (left != null) return left
 
                 // Try extending right (col + 1)
-                val right = CellCoordinate(row, maxCol + 1).takeIf { maxCol < 9 && !radar.hasFiredAt(it) }
+                val right = if (maxCol < 9) CellCoordinate(row, maxCol + 1).takeIf { !radar.hasFiredAt(it) } else null
                 if (right != null) return right
             } else if (isVertical) {
                 val col = cluster[0].col
@@ -127,11 +138,11 @@ class BattleshipBot {
                 val maxRow = cluster.maxOf { it.row }
 
                 // Try extending up (row - 1)
-                val up = CellCoordinate(minRow - 1, col).takeIf { minRow > 0 && !radar.hasFiredAt(it) }
+                val up = if (minRow > 0) CellCoordinate(minRow - 1, col).takeIf { !radar.hasFiredAt(it) } else null
                 if (up != null) return up
 
                 // Try extending down (row + 1)
-                val down = CellCoordinate(maxRow + 1, col).takeIf { maxRow < 9 && !radar.hasFiredAt(it) }
+                val down = if (maxRow < 9) CellCoordinate(maxRow + 1, col).takeIf { !radar.hasFiredAt(it) } else null
                 if (down != null) return down
             }
         }

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,6 +62,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.audio.BattleshipSoundManager
@@ -98,6 +100,7 @@ fun BattleshipGameView(
 ) {
     val context = LocalContext.current
     val view = LocalView.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val settings by viewModel.settings.collectAsState()
     val colors = ChillTheme.colors
@@ -152,37 +155,67 @@ fun BattleshipGameView(
     var fleetOverlayCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     fun getRadarCellCenter(coord: CellCoordinate): Offset {
-        val cellCoords = radarCellCoordinatesMap[coord]
-        val overlayCoords = radarOverlayCoordinates
-        if (cellCoords != null && overlayCoords != null && cellCoords.isAttached && overlayCoords.isAttached) {
-            return overlayCoords.localPositionOf(
-                cellCoords,
-                Offset(cellCoords.size.width / 2f, cellCoords.size.height / 2f)
-            )
+        val overlay = radarOverlayCoordinates
+        if (overlay != null && overlay.isAttached && overlay.size.width > 0 && overlay.size.height > 0) {
+            val rowLabelW = with(density) { 18.dp.toPx() }
+            val gridW = overlay.size.width.toFloat() - rowLabelW
+            val cellW = (gridW / 10f).coerceAtLeast(1f)
+            val cellH = (overlay.size.height.toFloat() / 10f).coerceAtLeast(1f)
+            return Offset(rowLabelW + (coord.col + 0.5f) * cellW, (coord.row + 0.5f) * cellH)
         }
+        try {
+            val cellCoords = radarCellCoordinatesMap[coord]
+            if (cellCoords != null && overlay != null && cellCoords.isAttached && overlay.isAttached) {
+                val center = overlay.localPositionOf(
+                    cellCoords,
+                    Offset(cellCoords.size.width / 2f, cellCoords.size.height / 2f)
+                )
+                if (center != Offset.Zero) return center
+            }
+        } catch (_: Throwable) {}
         return Offset.Zero
     }
 
     fun getRadarCellSize(coord: CellCoordinate): Float {
+        val overlay = radarOverlayCoordinates
+        if (overlay != null && overlay.isAttached && overlay.size.width > 0) {
+            val rowLabelW = with(density) { 18.dp.toPx() }
+            return ((overlay.size.width.toFloat() - rowLabelW) / 10f).coerceAtLeast(20f)
+        }
         val cellCoords = radarCellCoordinatesMap[coord]
-        return if (cellCoords != null && cellCoords.isAttached) cellCoords.size.width.toFloat() else 40f
+        return if (cellCoords != null && cellCoords.isAttached) cellCoords.size.width.toFloat().coerceAtLeast(20f) else 40f
     }
 
     fun getFleetCellCenter(coord: CellCoordinate): Offset {
-        val cellCoords = fleetCellCoordinatesMap[coord]
-        val overlayCoords = fleetOverlayCoordinates
-        if (cellCoords != null && overlayCoords != null && cellCoords.isAttached && overlayCoords.isAttached) {
-            return overlayCoords.localPositionOf(
-                cellCoords,
-                Offset(cellCoords.size.width / 2f, cellCoords.size.height / 2f)
-            )
+        val overlay = fleetOverlayCoordinates
+        if (overlay != null && overlay.isAttached && overlay.size.width > 0 && overlay.size.height > 0) {
+            val rowLabelW = with(density) { 18.dp.toPx() }
+            val gridW = overlay.size.width.toFloat() - rowLabelW
+            val cellW = (gridW / 10f).coerceAtLeast(1f)
+            val cellH = (overlay.size.height.toFloat() / 10f).coerceAtLeast(1f)
+            return Offset(rowLabelW + (coord.col + 0.5f) * cellW, (coord.row + 0.5f) * cellH)
         }
+        try {
+            val cellCoords = fleetCellCoordinatesMap[coord]
+            if (cellCoords != null && overlay != null && cellCoords.isAttached && overlay.isAttached) {
+                val center = overlay.localPositionOf(
+                    cellCoords,
+                    Offset(cellCoords.size.width / 2f, cellCoords.size.height / 2f)
+                )
+                if (center != Offset.Zero) return center
+            }
+        } catch (_: Throwable) {}
         return Offset.Zero
     }
 
     fun getFleetCellSize(coord: CellCoordinate): Float {
+        val overlay = fleetOverlayCoordinates
+        if (overlay != null && overlay.isAttached && overlay.size.width > 0) {
+            val rowLabelW = with(density) { 18.dp.toPx() }
+            return ((overlay.size.width.toFloat() - rowLabelW) / 10f).coerceAtLeast(20f)
+        }
         val cellCoords = fleetCellCoordinatesMap[coord]
-        return if (cellCoords != null && cellCoords.isAttached) cellCoords.size.width.toFloat() else 40f
+        return if (cellCoords != null && cellCoords.isAttached) cellCoords.size.width.toFloat().coerceAtLeast(20f) else 40f
     }
 
     val isDeployment = gameState.phase == BattleshipPhase.DEPLOYMENT_P1 ||
@@ -208,10 +241,6 @@ fun BattleshipGameView(
         matchRecorded = false
         hasPlayedOutcomeAudio = false
         remotePlayerReady = false
-        radarCellCoordinatesMap.clear()
-        fleetCellCoordinatesMap.clear()
-        radarOverlayCoordinates = null
-        fleetOverlayCoordinates = null
         activeAttack = null
         isAttackAnimating = false
         soundManager.stopAllSounds()
@@ -366,105 +395,112 @@ fun BattleshipGameView(
 
         // Solo & Local 1v1: Execute full visual multi-stage attack
         scope.launch {
-            activeBoardTab = 0 // Automatically display Radar (Attack) tab for human strike
-            isAttackAnimating = true
+            try {
+                activeBoardTab = 0 // Automatically display Radar (Attack) tab for human strike
+                isAttackAnimating = true
 
-            // Ensure layout coordinates of tapped cell are resolved
-            var targetCenter = getRadarCellCenter(coord)
-            var retryCount = 0
-            while (targetCenter == Offset.Zero && retryCount < 10) {
-                delay(20)
-                targetCenter = getRadarCellCenter(coord)
-                retryCount++
-            }
-            val cellSizePx = getRadarCellSize(coord)
-
-            // Peek at outcome to determine animation visuals
-            val enemyFleet = gameState.fleetFor(firingPlayer.opponent())
-            val hitShip = enemyFleet.getShipAt(coord)
-            val isHit = hitShip != null
-
-            // Stage 1: Target Lock (1,000 ms)
-            activeAttack = AttackAnimationData(
-                attacker = firingPlayer,
-                isBotAttacker = false,
-                targetCoord = coord,
-                targetBoard = BoardType.RADAR,
-                targetCenterInOverlay = targetCenter,
-                cellSizePx = cellSizePx,
-                isHit = isHit,
-                isSunk = false,
-                stage = AttackAnimationStage.TARGET_LOCK,
-                bannerTitle = if (selectedMode == GameMode.LOCAL_1V1 && firingPlayer == BattleshipPlayer.PLAYER_2) "⚔️ PLAYER 2 ATTACK" else "⚔️ YOUR ATTACK",
-                bannerSubtitle = "Targeting enemy fleet...",
-                resultText = "",
-                announcement = "Target lock acquired at ${('A' + coord.col)}${coord.row + 1}"
-            )
-            soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
-            delay(AttackTimingConfig.TARGET_LOCK_MS)
-
-            // Stage 2: Bomb Flight / Free Fall (1,500 ms)
-            activeAttack = activeAttack?.copy(
-                stage = AttackAnimationStage.PROJECTILE_FLIGHT,
-                bannerSubtitle = "Bomb falling from above..."
-            )
-            soundManager.playLaunch(settings.soundEnabled)
-            delay(AttackTimingConfig.PROJECTILE_FLIGHT_MS)
-
-            // Stage 3: Impact (Explosion or Splash) (1,200 ms)
-            val outcome = engine.fireShot(firingPlayer, coord)
-            gameState = engine.state
-
-            val isSunk = (outcome as? ShotOutcome.Hit)?.isSunk ?: false
-            val sunkShip = (outcome as? ShotOutcome.Hit)?.shipType?.title
-
-            val humanResultText = when {
-                isSunk -> "ENEMY SHIP SUNK! 💥"
-                isHit -> "DIRECT HIT! 🎯"
-                else -> "SHOT MISSED! 🌊"
-            }
-
-            activeAttack = activeAttack?.copy(
-                stage = AttackAnimationStage.IMPACT,
-                isSunk = isSunk,
-                sunkShipName = sunkShip,
-                bannerSubtitle = humanResultText,
-                resultText = humanResultText
-            )
-
-            if (isHit) {
-                if (isSunk) {
-                    soundManager.playShipSunk(settings.soundEnabled, settings.vibrationEnabled)
-                } else {
-                    soundManager.playHit(settings.soundEnabled, settings.vibrationEnabled)
+                // Ensure layout coordinates of tapped cell are resolved
+                var targetCenter = getRadarCellCenter(coord)
+                var retryCount = 0
+                while (targetCenter == Offset.Zero && retryCount < 10) {
+                    delay(20)
+                    targetCenter = getRadarCellCenter(coord)
+                    retryCount++
                 }
-            } else {
-                soundManager.playMiss(settings.soundEnabled, settings.vibrationEnabled)
-            }
-            delay(AttackTimingConfig.IMPACT_MS)
+                val cellSizePx = getRadarCellSize(coord)
 
-            // Stage 4: Result Announcement (1,500 ms)
-            val announcementText = when {
-                gameState.isGameOver -> "VICTORY! ALL ENEMY VESSELS SUNK!"
-                isSunk -> "DIRECT HIT! $sunkShip SUNK! TAKE ANOTHER SHOT!"
-                isHit -> "DIRECT HIT! EXTRA SHOT AWARDED!"
-                else -> "SPLASH! SHOT MISSED."
-            }
-            activeAttack = activeAttack?.copy(
-                stage = AttackAnimationStage.RESULT_ANNOUNCEMENT,
-                bannerSubtitle = announcementText,
-                announcement = announcementText
-            )
-            delay(AttackTimingConfig.RESULT_ANNOUNCEMENT_MS)
+                // Peek at outcome to determine animation visuals
+                val enemyFleet = gameState.fleetFor(firingPlayer.opponent())
+                val hitShip = enemyFleet.getShipAt(coord)
+                val isHit = hitShip != null
 
-            // Stage 5: Turn Transition (500 ms)
-            delay(AttackTimingConfig.TURN_TRANSITION_MS)
-            activeAttack = null
-            isAttackAnimating = false
+                // Stage 1: Target Lock (1,000 ms)
+                activeAttack = AttackAnimationData(
+                    attacker = firingPlayer,
+                    isBotAttacker = false,
+                    targetCoord = coord,
+                    targetBoard = BoardType.RADAR,
+                    targetCenterInOverlay = targetCenter,
+                    cellSizePx = cellSizePx,
+                    isHit = isHit,
+                    isSunk = false,
+                    stage = AttackAnimationStage.TARGET_LOCK,
+                    bannerTitle = if (selectedMode == GameMode.LOCAL_1V1 && firingPlayer == BattleshipPlayer.PLAYER_2) "⚔️ PLAYER 2 ATTACK" else "⚔️ YOUR ATTACK",
+                    bannerSubtitle = "Targeting enemy fleet...",
+                    resultText = "",
+                    announcement = "Target lock acquired at ${('A' + coord.col)}${coord.row + 1}"
+                )
+                soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
+                delay(AttackTimingConfig.TARGET_LOCK_MS)
 
-            if (!isHit && selectedMode == GameMode.LOCAL_1V1 && !gameState.isGameOver) {
-                handoverTargetPlayer = firingPlayer.opponent()
-                isHandoverVisible = true
+                // Stage 2: Bomb Flight / Free Fall (1,500 ms)
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.PROJECTILE_FLIGHT,
+                    bannerSubtitle = "Bomb falling from above..."
+                )
+                soundManager.playLaunch(settings.soundEnabled)
+                delay(AttackTimingConfig.PROJECTILE_FLIGHT_MS)
+
+                // Stage 3: Impact (Explosion or Splash) (1,200 ms)
+                val outcome = engine.fireShot(firingPlayer, coord)
+
+                val isSunk = (outcome as? ShotOutcome.Hit)?.isSunk ?: false
+                val sunkShip = (outcome as? ShotOutcome.Hit)?.shipType?.title
+
+                val humanResultText = when {
+                    isSunk -> "ENEMY SHIP SUNK! 💥"
+                    isHit -> "DIRECT HIT! 🎯"
+                    else -> "SHOT MISSED! 🌊"
+                }
+
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.IMPACT,
+                    isSunk = isSunk,
+                    sunkShipName = sunkShip,
+                    bannerSubtitle = humanResultText,
+                    resultText = humanResultText
+                )
+
+                if (isHit) {
+                    if (isSunk) {
+                        soundManager.playShipSunk(settings.soundEnabled, settings.vibrationEnabled)
+                    } else {
+                        soundManager.playHit(settings.soundEnabled, settings.vibrationEnabled)
+                    }
+                } else {
+                    soundManager.playMiss(settings.soundEnabled, settings.vibrationEnabled)
+                }
+                delay(AttackTimingConfig.IMPACT_MS)
+
+                // Stage 4: Result Announcement (1,500 ms)
+                val announcementText = when {
+                    engine.state.isGameOver -> "VICTORY! ALL ENEMY VESSELS SUNK!"
+                    isSunk -> "DIRECT HIT! $sunkShip SUNK! TAKE ANOTHER SHOT!"
+                    isHit -> "DIRECT HIT! EXTRA SHOT AWARDED!"
+                    else -> "SPLASH! SHOT MISSED."
+                }
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.RESULT_ANNOUNCEMENT,
+                    bannerSubtitle = announcementText,
+                    announcement = announcementText
+                )
+                delay(AttackTimingConfig.RESULT_ANNOUNCEMENT_MS)
+
+                // Stage 5: Turn Transition (500 ms)
+                delay(AttackTimingConfig.TURN_TRANSITION_MS)
+
+                // Commit authoritative game state after human animation finishes cleanly
+                gameState = engine.state
+
+                if (!isHit && selectedMode == GameMode.LOCAL_1V1 && !engine.state.isGameOver) {
+                    handoverTargetPlayer = firingPlayer.opponent()
+                    isHandoverVisible = true
+                }
+            } catch (_: Exception) {
+                gameState = engine.state
+            } finally {
+                activeAttack = null
+                isAttackAnimating = false
             }
         }
     }
@@ -475,115 +511,123 @@ fun BattleshipGameView(
     LaunchedEffect(gameState.activePlayer, gameState.phase, selectedMode, sessionKey) {
         if (selectedMode != GameMode.SOLO) return@LaunchedEffect
         if (gameState.phase != BattleshipPhase.BATTLE) return@LaunchedEffect
+        if (gameState.activePlayer != BattleshipPlayer.PLAYER_2) return@LaunchedEffect
 
         while (gameState.activePlayer == BattleshipPlayer.PLAYER_2 && !gameState.isGameOver) {
-            // Automatically switch to MY FLEET (DEFENSE) board for incoming bot strike!
-            activeBoardTab = 1
-            isBotThinking = true
+            try {
+                // Automatically switch to MY FLEET (DEFENSE) board for incoming bot strike!
+                activeBoardTab = 1
+                isBotThinking = true
 
-            // Stage 0: Thinking / Preparation (1,200 ms)
-            delay(AttackTimingConfig.THINKING_MS)
+                // Stage 0: Thinking / Preparation (1,200 ms)
+                delay(AttackTimingConfig.THINKING_MS)
 
-            // Stage 1: Bot decides move & locks target (1,000 ms)
-            val targetCoord = bot.decideMove(gameState.p2Radar)
-            isBotThinking = false
-            isAttackAnimating = true
+                // Stage 1: Bot decides move & locks target (1,000 ms)
+                val targetCoord = bot.decideMove(gameState.p2Radar)
+                isBotThinking = false
+                isAttackAnimating = true
 
-            // Ensure fleet board layout is measured
-            var targetCenter = getFleetCellCenter(targetCoord)
-            var retryCount = 0
-            while (targetCenter == Offset.Zero && retryCount < 10) {
-                delay(20)
-                targetCenter = getFleetCellCenter(targetCoord)
-                retryCount++
-            }
-            val cellSizePx = getFleetCellSize(targetCoord)
-
-            val humanFleet = gameState.p1Fleet
-            val hitShip = humanFleet.getShipAt(targetCoord)
-            val isHit = hitShip != null
-
-            activeAttack = AttackAnimationData(
-                attacker = BattleshipPlayer.PLAYER_2,
-                isBotAttacker = true,
-                targetCoord = targetCoord,
-                targetBoard = BoardType.MY_FLEET,
-                targetCenterInOverlay = targetCenter,
-                cellSizePx = cellSizePx,
-                isHit = isHit,
-                isSunk = false,
-                stage = AttackAnimationStage.TARGET_LOCK,
-                bannerTitle = "🤖 BOT ATTACKING YOU!",
-                bannerSubtitle = "Incoming naval strike...",
-                resultText = "",
-                announcement = "Warning! Strike locked at ${('A' + targetCoord.col)}${targetCoord.row + 1}"
-            )
-            soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
-            delay(AttackTimingConfig.TARGET_LOCK_MS)
-
-            // Stage 2: Bomb Flight / Free Fall (1,500 ms)
-            activeAttack = activeAttack?.copy(
-                stage = AttackAnimationStage.PROJECTILE_FLIGHT,
-                bannerSubtitle = "Bomb dropping on your fleet..."
-            )
-            soundManager.playLaunch(settings.soundEnabled)
-            delay(AttackTimingConfig.PROJECTILE_FLIGHT_MS)
-
-            // Stage 3: Impact (Explosion / Splash) (1,200 ms)
-            val outcome = engine.fireShot(BattleshipPlayer.PLAYER_2, targetCoord)
-            bot.onShotResult(targetCoord, outcome)
-            gameState = engine.state
-
-            val isSunk = (outcome as? ShotOutcome.Hit)?.isSunk ?: false
-            val sunkShip = (outcome as? ShotOutcome.Hit)?.shipType?.title
-
-            val botResultText = when {
-                isSunk -> "YOUR SHIP SUNK! 🚢"
-                isHit -> "YOUR SHIP HIT! 💥"
-                else -> "BOT MISSED! 🌊"
-            }
-
-            activeAttack = activeAttack?.copy(
-                stage = AttackAnimationStage.IMPACT,
-                isSunk = isSunk,
-                sunkShipName = sunkShip,
-                bannerSubtitle = botResultText,
-                resultText = botResultText
-            )
-
-            if (isHit) {
-                if (isSunk) {
-                    soundManager.playShipSunk(settings.soundEnabled, settings.vibrationEnabled)
-                } else {
-                    soundManager.playHit(settings.soundEnabled, settings.vibrationEnabled)
+                // Ensure fleet board layout is measured
+                var targetCenter = getFleetCellCenter(targetCoord)
+                var retryCount = 0
+                while (targetCenter == Offset.Zero && retryCount < 10) {
+                    delay(20)
+                    targetCenter = getFleetCellCenter(targetCoord)
+                    retryCount++
                 }
-            } else {
-                soundManager.playMiss(settings.soundEnabled, settings.vibrationEnabled)
-            }
-            delay(AttackTimingConfig.IMPACT_MS)
+                val cellSizePx = getFleetCellSize(targetCoord)
 
-            // Stage 4: Result Announcement (1,500 ms)
-            val announcementText = when {
-                gameState.isGameOver -> "BOT DESTROYED YOUR FLEET!"
-                isSunk -> "YOUR $sunkShip SUNK! BOT ATTACKING AGAIN!"
-                isHit -> "YOUR SHIP WAS HIT! BOT GETS ANOTHER SHOT!"
-                else -> "BOT MISSED! YOUR TURN!"
-            }
-            activeAttack = activeAttack?.copy(
-                stage = AttackAnimationStage.RESULT_ANNOUNCEMENT,
-                bannerSubtitle = botResultText,
-                announcement = announcementText
-            )
-            delay(AttackTimingConfig.RESULT_ANNOUNCEMENT_MS)
+                val humanFleet = gameState.p1Fleet
+                val hitShip = humanFleet.getShipAt(targetCoord)
+                val isHit = hitShip != null
 
-            // Stage 5: Turn Transition (500 ms)
-            delay(AttackTimingConfig.TURN_TRANSITION_MS)
-            activeAttack = null
-            isAttackAnimating = false
+                activeAttack = AttackAnimationData(
+                    attacker = BattleshipPlayer.PLAYER_2,
+                    isBotAttacker = true,
+                    targetCoord = targetCoord,
+                    targetBoard = BoardType.MY_FLEET,
+                    targetCenterInOverlay = targetCenter,
+                    cellSizePx = cellSizePx,
+                    isHit = isHit,
+                    isSunk = false,
+                    stage = AttackAnimationStage.TARGET_LOCK,
+                    bannerTitle = "🤖 BOT ATTACKING YOU!",
+                    bannerSubtitle = "Incoming naval strike...",
+                    resultText = "",
+                    announcement = "Warning! Strike locked at ${('A' + targetCoord.col)}${targetCoord.row + 1}"
+                )
+                soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
+                delay(AttackTimingConfig.TARGET_LOCK_MS)
 
-            // If bot missed and it is now human turn, automatically switch back to Radar tab!
-            if (!isHit && gameState.activePlayer == BattleshipPlayer.PLAYER_1 && !gameState.isGameOver) {
-                activeBoardTab = 0
+                // Stage 2: Bomb Flight / Free Fall (1,500 ms)
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.PROJECTILE_FLIGHT,
+                    bannerSubtitle = "Bomb dropping on your fleet..."
+                )
+                soundManager.playLaunch(settings.soundEnabled)
+                delay(AttackTimingConfig.PROJECTILE_FLIGHT_MS)
+
+                // Stage 3: Impact (Explosion / Splash) (1,200 ms)
+                val outcome = engine.fireShot(BattleshipPlayer.PLAYER_2, targetCoord)
+                bot.onShotResult(targetCoord, outcome)
+
+                val isSunk = (outcome as? ShotOutcome.Hit)?.isSunk ?: false
+                val sunkShip = (outcome as? ShotOutcome.Hit)?.shipType?.title
+
+                val botResultText = when {
+                    isSunk -> "YOUR SHIP SUNK! 🚢"
+                    isHit -> "YOUR SHIP HIT! 💥"
+                    else -> "BOT MISSED! 🌊"
+                }
+
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.IMPACT,
+                    isSunk = isSunk,
+                    sunkShipName = sunkShip,
+                    bannerSubtitle = botResultText,
+                    resultText = botResultText
+                )
+
+                if (isHit) {
+                    if (isSunk) {
+                        soundManager.playShipSunk(settings.soundEnabled, settings.vibrationEnabled)
+                    } else {
+                        soundManager.playHit(settings.soundEnabled, settings.vibrationEnabled)
+                    }
+                } else {
+                    soundManager.playMiss(settings.soundEnabled, settings.vibrationEnabled)
+                }
+                delay(AttackTimingConfig.IMPACT_MS)
+
+                // Stage 4: Result Announcement (1,500 ms)
+                val announcementText = when {
+                    engine.state.isGameOver -> "BOT DESTROYED YOUR FLEET!"
+                    isSunk -> "YOUR $sunkShip SUNK! BOT ATTACKING AGAIN!"
+                    isHit -> "YOUR SHIP WAS HIT! BOT GETS ANOTHER SHOT!"
+                    else -> "BOT MISSED! YOUR TURN!"
+                }
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.RESULT_ANNOUNCEMENT,
+                    bannerSubtitle = botResultText,
+                    announcement = announcementText
+                )
+                delay(AttackTimingConfig.RESULT_ANNOUNCEMENT_MS)
+
+                // Stage 5: Turn Transition (500 ms)
+                delay(AttackTimingConfig.TURN_TRANSITION_MS)
+
+                // Commit updated game state after bot attack animation finishes
+                gameState = engine.state
+
+                // If bot missed and it is now human turn, automatically switch back to Radar tab!
+                if (!isHit && engine.state.activePlayer == BattleshipPlayer.PLAYER_1 && !engine.state.isGameOver) {
+                    activeBoardTab = 0
+                }
+            } catch (_: Exception) {
+                gameState = engine.state
+            } finally {
+                activeAttack = null
+                isAttackAnimating = false
             }
         }
     }
@@ -854,11 +898,26 @@ fun BattleshipGameView(
                     else -> gameState.activePlayer
                 }
 
+                // DATA PRIVACY: Ensure the UI receives ONLY the fleet and radar it is allowed to display!
+                // In SOLO mode: NEVER pass bot's fleet to the UI. Only human fleet is shown on MY FLEET.
+                // In Nearby (WiFi) mode: NEVER pass remote opponent's unhit fleet to the UI.
+                val displayRadar = when {
+                    selectedMode == GameMode.SOLO -> gameState.p1Radar
+                    isNearbyMode -> gameState.radarFor(localPlayer)
+                    else -> gameState.radarFor(viewingPlayer)
+                }
+
+                val displayFleet = when {
+                    selectedMode == GameMode.SOLO -> gameState.p1Fleet
+                    isNearbyMode -> gameState.fleetFor(localPlayer)
+                    else -> gameState.fleetFor(viewingPlayer)
+                }
+
                 BattleArenaView(
                     viewingPlayer = viewingPlayer,
                     activePlayer = gameState.activePlayer,
-                    radar = gameState.radarFor(viewingPlayer),
-                    myFleet = gameState.fleetFor(viewingPlayer),
+                    radar = displayRadar,
+                    myFleet = displayFleet,
                     activeTab = activeBoardTab,
                     onTabChanged = { if (!isAttackAnimating && !isBotThinking) activeBoardTab = it },
                     onTargetClick = { onTargetCellClick(it) },
@@ -871,7 +930,9 @@ fun BattleshipGameView(
                     onRadarCellPositioned = { coord, coords -> radarCellCoordinatesMap[coord] = coords },
                     onRadarOverlayPositioned = { radarOverlayCoordinates = it },
                     onFleetCellPositioned = { coord, coords -> fleetCellCoordinatesMap[coord] = coords },
-                    onFleetOverlayPositioned = { fleetOverlayCoordinates = it }
+                    onFleetOverlayPositioned = { fleetOverlayCoordinates = it },
+                    getRadarCellCenter = { getRadarCellCenter(it) },
+                    getFleetCellCenter = { getFleetCellCenter(it) }
                 )
             }
         }
@@ -1088,54 +1149,127 @@ private fun FleetDeploymentView(
 
         // Selected Ship Action Bar: Rotate / Remove / Clear
         if (selectedShip != null) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color(0xFF0F172A))
                     .border(1.5.dp, Color(0xFF38BDF8), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column {
-                    Text(
-                        text = "SELECTED: ${selectedShip.title.uppercase()}",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF38BDF8)
-                    )
-                    Text(
-                        text = if (isSelectedShipPlaced) "Tap board to move, or rotate/remove" else "Tap board to position (${selectedShip.length} cells)",
-                        fontSize = 10.sp,
-                        color = Color(0xFF94A3B8)
-                    )
+                // Header row: Selected ship name, orientation, status
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "SELECTED: ${selectedShip.title.uppercase()}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color(0xFF38BDF8),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = if (isSelectedShipPlaced) {
+                                "Placed on board • Tap cell to move"
+                            } else {
+                                "Ready to deploy • ${selectedShip.length} cells"
+                            },
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Orientation Pill
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (orientation == ShipOrientation.HORIZONTAL) "HORIZ ➡️" else "VERT ⬇️",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Action Buttons Row: Rotate & Remove with equal flexible weights and proper touch targets
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     // Rotate Button
                     Box(
                         modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 44.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF0284C7))
                             .bouncyClickable(onClick = onRotateShip)
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                            .testTag("rotate_selected_ship_button")
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("rotate_selected_ship_button"),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text("ROTATE 🔄", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Rotate",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "ROTATE",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color.White
+                            )
+                        }
                     }
 
                     // Remove Button (if placed)
                     if (isSelectedShipPlaced) {
                         Box(
                             modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 44.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Color(0xFFDC2626))
                                 .bouncyClickable { onRemoveShip(selectedShip) }
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                                .testTag("remove_selected_ship_button")
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("remove_selected_ship_button"),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text("REMOVE ✕", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Remove",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "REMOVE",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color.White
+                                )
+                            }
                         }
                     }
                 }
@@ -1308,7 +1442,9 @@ private fun BattleArenaView(
     onRadarCellPositioned: (CellCoordinate, LayoutCoordinates) -> Unit,
     onRadarOverlayPositioned: (LayoutCoordinates) -> Unit,
     onFleetCellPositioned: (CellCoordinate, LayoutCoordinates) -> Unit,
-    onFleetOverlayPositioned: (LayoutCoordinates) -> Unit
+    onFleetOverlayPositioned: (LayoutCoordinates) -> Unit,
+    getRadarCellCenter: (CellCoordinate) -> Offset,
+    getFleetCellCenter: (CellCoordinate) -> Offset
 ) {
     val isMyTurn = (selectedMode == GameMode.SOLO && activePlayer == BattleshipPlayer.PLAYER_1) ||
         (selectedMode == GameMode.LOCAL_1V1 && activePlayer == viewingPlayer) ||
@@ -1481,69 +1617,70 @@ private fun BattleArenaView(
         // Grid Display based on active tab
         if (activeTab == 0) {
             // Radar Board: Enemy targeting
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { onRadarOverlayPositioned(it) },
-                contentAlignment = Alignment.Center
-            ) {
-                OceanBattleshipGrid(
-                    gridSize = 10,
-                    onCellClick = { r, c ->
-                        if (!isAttackAnimating && !isBotThinking) {
-                            onTargetClick(CellCoordinate(r, c))
-                        }
-                    },
-                    onCellPositioned = onRadarCellPositioned,
-                    cellContent = { r, c ->
-                        val coord = CellCoordinate(r, c)
-                        val isFired = radar.shots.containsKey(coord)
-                        val isHit = radar.shots[coord] == true
+            OceanBattleshipGrid(
+                gridSize = 10,
+                onCellClick = { r, c ->
+                    if (!isAttackAnimating && !isBotThinking) {
+                        onTargetClick(CellCoordinate(r, c))
+                    }
+                },
+                onCellPositioned = onRadarCellPositioned,
+                onGridPositioned = onRadarOverlayPositioned,
+                overlayContent = {
+                    if (activeAttack != null && activeAttack.targetBoard == BoardType.RADAR) {
+                        AttackEffectOverlay(
+                            attackData = activeAttack,
+                            modifier = Modifier.matchParentSize(),
+                            liveCellCenterProvider = getRadarCellCenter
+                        )
+                    }
+                },
+                cellContent = { r, c ->
+                    val coord = CellCoordinate(r, c)
+                    val isTargeted = activeAttack != null && activeAttack.targetBoard == BoardType.RADAR && activeAttack.targetCoord == coord
+                    val isFired = radar.shots.containsKey(coord)
+                    val isHit = radar.shots[coord] == true
 
-                        if (isFired) {
-                            if (isHit) {
-                                // Fiery breach on hit
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color(0xFFEF4444).copy(alpha = 0.35f))
-                                        .border(0.5.dp, Color(0xFFF87171)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("🔥", fontSize = 11.sp)
-                                }
-                            } else {
-                                // Water splash on miss
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color(0xFF0284C7).copy(alpha = 0.25f))
-                                        .border(0.5.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("🌊", fontSize = 9.sp)
-                                }
+                    val cellModifier = if (isTargeted) {
+                        Modifier
+                            .fillMaxSize()
+                            .border(1.5.dp, Color(0xFF38BDF8))
+                    } else {
+                        Modifier.fillMaxSize()
+                    }
+
+                    if (isFired) {
+                        if (isHit) {
+                            // Fiery breach on hit
+                            Box(
+                                modifier = cellModifier
+                                    .background(Color(0xFFEF4444).copy(alpha = 0.35f))
+                                    .border(0.5.dp, Color(0xFFF87171)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("🔥", fontSize = 11.sp)
                             }
                         } else {
-                            // Untried ocean water cell
+                            // Water splash on miss
                             Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFF0F2B48).copy(alpha = 0.65f))
-                                    .border(0.5.dp, Color(0xFF1E3A5F).copy(alpha = 0.5f))
-                            )
+                                modifier = cellModifier
+                                    .background(Color(0xFF0284C7).copy(alpha = 0.25f))
+                                    .border(0.5.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("🌊", fontSize = 9.sp)
+                            }
                         }
+                    } else {
+                        // Untried ocean water cell
+                        Box(
+                            modifier = cellModifier
+                                .background(if (isTargeted) Color(0xFF0284C7).copy(alpha = 0.4f) else Color(0xFF0F2B48).copy(alpha = 0.65f))
+                                .border(0.5.dp, if (isTargeted) Color(0xFF38BDF8) else Color(0xFF1E3A5F).copy(alpha = 0.5f))
+                        )
                     }
-                )
-
-                // Attack animation visual effect overlay for Radar Board using exact measured cell center
-                if (activeAttack != null && activeAttack.targetBoard == BoardType.RADAR) {
-                    AttackEffectOverlay(
-                        attackData = activeAttack,
-                        modifier = Modifier.fillMaxSize()
-                    )
                 }
-            }
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -1563,63 +1700,67 @@ private fun BattleArenaView(
             }
         } else {
             // My Fleet Board (Defense)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { onFleetOverlayPositioned(it) },
-                contentAlignment = Alignment.Center
-            ) {
-                OceanBattleshipGrid(
-                    gridSize = 10,
-                    onCellClick = { _, _ -> },
-                    onCellPositioned = onFleetCellPositioned,
-                    cellContent = { r, c ->
-                        val coord = CellCoordinate(r, c)
-                        val ship = myFleet.getShipAt(coord)
-                        val isFiredAt = myFleet.incomingShots.containsKey(coord)
-                        val isHit = myFleet.incomingShots[coord] == true
+            OceanBattleshipGrid(
+                gridSize = 10,
+                onCellClick = { _, _ -> },
+                onCellPositioned = onFleetCellPositioned,
+                onGridPositioned = onFleetOverlayPositioned,
+                overlayContent = {
+                    if (activeAttack != null && activeAttack.targetBoard == BoardType.MY_FLEET) {
+                        AttackEffectOverlay(
+                            attackData = activeAttack,
+                            modifier = Modifier.matchParentSize(),
+                            liveCellCenterProvider = getFleetCellCenter
+                        )
+                    }
+                },
+                cellContent = { r, c ->
+                    val coord = CellCoordinate(r, c)
+                    val isTargeted = activeAttack != null && activeAttack.targetBoard == BoardType.MY_FLEET && activeAttack.targetCoord == coord
+                    val ship = myFleet.getShipAt(coord)
+                    val isFiredAt = myFleet.incomingShots.containsKey(coord)
+                    val isHit = myFleet.incomingShots[coord] == true
 
-                        if (ship != null) {
-                            val isSunk = myFleet.isShipSunk(ship)
-                            val segmentIndex = ship.occupiedCoordinates.indexOf(coord)
+                    val cellModifier = if (isTargeted) {
+                        Modifier
+                            .fillMaxSize()
+                            .border(1.5.dp, Color(0xFFEF4444))
+                    } else {
+                        Modifier.fillMaxSize()
+                    }
 
+                    if (ship != null) {
+                        val isSunk = myFleet.isShipSunk(ship)
+                        val segmentIndex = ship.occupiedCoordinates.indexOf(coord)
+
+                        Box(modifier = cellModifier) {
                             BattleshipShipGraphics.ShipCellSegment(
                                 shipType = ship.shipType,
                                 orientation = ship.orientation,
                                 segmentIndex = segmentIndex,
                                 isHit = isHit,
                                 isSunk = isSunk,
-                                isSelected = false,
+                                isSelected = isTargeted,
                                 modifier = Modifier.fillMaxSize()
                             )
-                        } else if (isFiredAt) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFF0284C7).copy(alpha = 0.25f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("🌊", fontSize = 9.sp)
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFF0F2B48).copy(alpha = 0.5f))
-                                    .border(0.5.dp, Color(0xFF1E3A5F).copy(alpha = 0.4f))
-                            )
                         }
+                    } else if (isFiredAt) {
+                        Box(
+                            modifier = cellModifier
+                                .background(Color(0xFF0284C7).copy(alpha = 0.25f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🌊", fontSize = 9.sp)
+                        }
+                    } else {
+                        Box(
+                            modifier = cellModifier
+                                .background(if (isTargeted) Color(0xFFEF4444).copy(alpha = 0.3f) else Color(0xFF0F2B48).copy(alpha = 0.5f))
+                                .border(0.5.dp, if (isTargeted) Color(0xFFEF4444) else Color(0xFF1E3A5F).copy(alpha = 0.4f))
+                        )
                     }
-                )
-
-                // Attack animation visual effect overlay for My Fleet Board using exact measured cell center
-                if (activeAttack != null && activeAttack.targetBoard == BoardType.MY_FLEET) {
-                    AttackEffectOverlay(
-                        attackData = activeAttack,
-                        modifier = Modifier.fillMaxSize()
-                    )
                 }
-            }
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -1679,6 +1820,8 @@ private fun OceanBattleshipGrid(
     gridSize: Int = 10,
     onCellClick: (Int, Int) -> Unit,
     onCellPositioned: ((CellCoordinate, LayoutCoordinates) -> Unit)? = null,
+    onGridPositioned: ((LayoutCoordinates) -> Unit)? = null,
+    overlayContent: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null,
     cellContent: @Composable (Int, Int) -> Unit
 ) {
     Column(
@@ -1716,45 +1859,55 @@ private fun OceanBattleshipGrid(
 
         Spacer(modifier = Modifier.height(2.dp))
 
-        // Grid Rows 1 to 10
-        for (r in 0 until gridSize) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 0.5.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Row Number 1 to 10
-                Box(
-                    modifier = Modifier.width(18.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "${r + 1}",
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF38BDF8)
-                    )
-                }
-
-                Row(modifier = Modifier.weight(1f)) {
-                    for (c in 0 until gridSize) {
+        // Grid Rows 1 to 10 wrapped with Overlay in a single Box
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { onGridPositioned?.invoke(it) }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                for (r in 0 until gridSize) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 0.5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Row Number 1 to 10
                         Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .aspectRatio(1f)
-                                .padding(0.8.dp)
-                                .onGloballyPositioned { cellCoords ->
-                                    onCellPositioned?.invoke(CellCoordinate(r, c), cellCoords)
-                                }
-                                .clickable { onCellClick(r, c) }
-                                .testTag("cell_${r}_${c}")
+                            modifier = Modifier.width(18.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            cellContent(r, c)
+                            Text(
+                                text = "${r + 1}",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF38BDF8)
+                            )
+                        }
+
+                        Row(modifier = Modifier.weight(1f)) {
+                            for (c in 0 until gridSize) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .padding(0.8.dp)
+                                        .onGloballyPositioned { cellCoords ->
+                                            onCellPositioned?.invoke(CellCoordinate(r, c), cellCoords)
+                                        }
+                                        .clickable { onCellClick(r, c) }
+                                        .testTag("cell_${r}_${c}")
+                                ) {
+                                    cellContent(r, c)
+                                }
+                            }
                         }
                     }
                 }
             }
+
+            overlayContent?.invoke(this)
         }
     }
 }

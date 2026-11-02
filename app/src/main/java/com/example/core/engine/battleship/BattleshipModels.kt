@@ -53,6 +53,14 @@ data class CellCoordinate(
             return CellCoordinate(row = index / GRID_SIZE, col = index % GRID_SIZE)
         }
 
+        fun ofOrNull(row: Int, col: Int): CellCoordinate? {
+            return if (row in 0 until GRID_SIZE && col in 0 until GRID_SIZE) {
+                CellCoordinate(row, col)
+            } else {
+                null
+            }
+        }
+
         fun parse(label: String): CellCoordinate? {
             val trimmed = label.trim().uppercase()
             if (trimmed.length < 2 || trimmed.length > 3) return null

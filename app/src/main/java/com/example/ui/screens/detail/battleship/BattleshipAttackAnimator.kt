@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -199,22 +200,30 @@ fun AttackerIdentificationBanner(
 
 /**
  * High-performance localized attack visual effects overlay:
- * - Stage 1 (TARGET_LOCK): Rotating reticle, locking brackets, pulsing core pip at exact cell center.
+ * - Stage 1 (TARGET_LOCK): Highlight target cell, stationary crosshair centered on selected cell.
  * - Stage 2 (PROJECTILE_FLIGHT / BOMB DESCENT): Top-down aerial bomb falling straight down vertically into exact cell center.
- *   Crosshair remains stationary on selected cell.
- * - Stage 3 (IMPACT): Expanding shockwave, fireball explosion or water splash ripples at exact cell center.
+ *   X coordinate is strictly constant; Y increases smoothly with gravity acceleration.
+ * - Stage 3 (IMPACT): Localized fireball explosion (for Hit) or water splash (for Miss) at exact cell center.
+ * - Stage 4 (RESULT_ANNOUNCEMENT): Result displayed with target cell highlighted.
  */
 @Composable
 fun AttackEffectOverlay(
     attackData: AttackAnimationData,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    liveCellCenterProvider: ((CellCoordinate) -> Offset)? = null
 ) {
+    val liveCenter = liveCellCenterProvider?.invoke(attackData.targetCoord)
+    val effectiveCenter = if (liveCenter != null && liveCenter != Offset.Zero) {
+        liveCenter
+    } else {
+        attackData.targetCenterInOverlay
+    }
     AttackEffectOverlay(
         targetCoord = attackData.targetCoord,
         stage = attackData.stage,
         isHit = attackData.isHit,
         isBotAttacker = attackData.isBotAttacker,
-        targetCellCenter = attackData.targetCenterInOverlay,
+        targetCellCenter = effectiveCenter,
         cellSizePx = attackData.cellSizePx,
         modifier = modifier
     )
@@ -230,7 +239,7 @@ fun AttackEffectOverlay(
     cellSizePx: Float,
     modifier: Modifier = Modifier
 ) {
-    if (stage == AttackAnimationStage.IDLE || targetCellCenter == Offset.Zero) return
+    if (stage == AttackAnimationStage.IDLE) return
 
     val progress = remember { Animatable(0f) }
 
@@ -256,32 +265,71 @@ fun AttackEffectOverlay(
         }
     }
 
+    val density = LocalDensity.current
     Canvas(modifier = modifier.fillMaxSize()) {
+        if (size.width <= 0f || size.height <= 0f) return@Canvas
+
+        val rowLabelW = with(density) { 18.dp.toPx() }
+        val gridW = size.width - rowLabelW
+        val cellW = if (gridW > 10f) gridW / 10f else size.width / 10f
+        val cellH = size.height / 10f
+
+        // Exact mathematical center of the targeted cell in the 10-rows overlay coordinate space
+        val exactCenter = Offset(
+            x = rowLabelW + (targetCoord.col + 0.5f) * cellW,
+            y = (targetCoord.row + 0.5f) * cellH
+        )
+
+        // Use exactCenter to guarantee 100% alignment with the targeted cell
+        val resolvedCenter = if (targetCellCenter != Offset.Zero &&
+            targetCellCenter.x >= 0f && targetCellCenter.x <= size.width &&
+            targetCellCenter.y >= 0f && targetCellCenter.y <= size.height
+        ) {
+            targetCellCenter
+        } else {
+            exactCenter
+        }
+        val resolvedCellSize = if (cellSizePx > 10f) cellSizePx else cellW
+
         when (stage) {
             AttackAnimationStage.TARGET_LOCK -> {
-                drawTargetCrosshair(targetCellCenter, cellSizePx, progress.value, isBotAttacker, isLocking = true)
+                drawTargetCrosshair(resolvedCenter, resolvedCellSize, progress.value, isBotAttacker, isLocking = true)
             }
             AttackAnimationStage.PROJECTILE_FLIGHT -> {
                 // Keep target crosshair stationary on selected cell
-                drawTargetCrosshair(targetCellCenter, cellSizePx, 1f, isBotAttacker, isLocking = false)
-                // Drop aerial bomb vertically straight down into target cell center
-                drawVerticalFallingBomb(targetCellCenter, cellSizePx, progress.value, isBotAttacker)
+                drawTargetCrosshair(resolvedCenter, resolvedCellSize, 1f, isBotAttacker, isLocking = false)
+                // Drop aerial bomb vertically straight down into exact target cell center
+                drawVerticalFallingBomb(resolvedCenter, resolvedCellSize, progress.value, isBotAttacker)
             }
             AttackAnimationStage.IMPACT -> {
                 // Target cell remains marked
-                drawTargetCrosshair(targetCellCenter, cellSizePx, 1f, isBotAttacker, isLocking = false)
+                drawTargetCrosshair(resolvedCenter, resolvedCellSize, 1f, isBotAttacker, isLocking = false)
                 if (isHit) {
-                    drawExplosionImpact(targetCellCenter, cellSizePx, progress.value)
+                    drawExplosionImpact(resolvedCenter, resolvedCellSize, progress.value)
                 } else {
-                    drawWaterSplashImpact(targetCellCenter, cellSizePx, progress.value)
+                    drawWaterSplashImpact(resolvedCenter, resolvedCellSize, progress.value)
                 }
             }
             AttackAnimationStage.RESULT_ANNOUNCEMENT -> {
-                drawTargetCrosshair(targetCellCenter, cellSizePx, 1f, isBotAttacker, isLocking = false)
+                drawTargetCrosshair(resolvedCenter, resolvedCellSize, 1f, isBotAttacker, isLocking = false)
             }
             else -> {}
         }
     }
+}
+
+/**
+ * Fallback grid center calculator using exact 10x10 Battleship board layout dimensions.
+ * Ensures the animation never fails even before initial Compose layout measure completes.
+ */
+fun calculateFallbackGridCenter(coord: CellCoordinate, boardWidth: Float, boardHeight: Float, rowLabelWidthPx: Float = 48f): Offset {
+    val actualLabelW = if (rowLabelWidthPx > 0f) rowLabelWidthPx else (boardWidth * 0.05f).coerceAtLeast(36f)
+    val gridW = boardWidth - actualLabelW
+    val cellW = (gridW / 10f).coerceAtLeast(1f)
+    val cellH = (boardHeight / 10f).coerceAtLeast(1f)
+    val cx = actualLabelW + (coord.col + 0.5f) * cellW
+    val cy = (coord.row + 0.5f) * cellH
+    return Offset(cx, cy)
 }
 
 private fun DrawScope.drawTargetCrosshair(
@@ -380,16 +428,18 @@ private fun DrawScope.drawVerticalFallingBomb(
     val bombY = startY + (targetY - startY) * gravityProgress
 
     // 3. Perspective scaling: subtle drop from high altitude to ocean surface
-    val depthScale = 1.22f - 0.22f * progress
-    val bombWidth = sizePx * 0.42f * depthScale
-    val bombLength = sizePx * 1.12f * depthScale
+    val safeSizePx = sizePx.coerceAtLeast(20f)
+    val depthScale = (1.15f - 0.15f * progress).coerceAtLeast(0.5f)
+    val bombWidth = (safeSizePx * 0.44f * depthScale).coerceAtLeast(10f)
+    val bombLength = (safeSizePx * 0.94f * depthScale).coerceAtLeast(20f)
     val halfW = bombWidth / 2f
-    val h = bombLength
-    val tailTopY = bombY - h
+    val halfH = bombLength / 2f
+    val tailTopY = bombY - halfH
+    val noseBottomY = bombY + halfH
 
     // 4. Ground Target Shadow on Ocean Surface (centered at targetCenter)
     val shadowProgress = progress.coerceIn(0f, 1f)
-    val shadowRadius = sizePx * 0.40f * shadowProgress
+    val shadowRadius = (safeSizePx * 0.40f * shadowProgress).coerceAtLeast(0f)
     val shadowAlpha = (0.15f + 0.55f * shadowProgress).coerceIn(0f, 0.70f)
     drawCircle(
         color = Color(0xFF020617).copy(alpha = shadowAlpha),
@@ -398,7 +448,7 @@ private fun DrawScope.drawVerticalFallingBomb(
     )
     drawCircle(
         color = (if (isBotAttacker) Color(0xFFEF4444) else Color(0xFF38BDF8)).copy(alpha = shadowAlpha * 0.5f),
-        radius = shadowRadius * 1.15f,
+        radius = (shadowRadius * 1.15f).coerceAtLeast(0f),
         center = targetCenter,
         style = Stroke(width = 1.5f)
     )
@@ -429,38 +479,39 @@ private fun DrawScope.drawVerticalFallingBomb(
 
     // 6. Aerial Bomb Stabilizer Tail Fins Assembly
     val leftFin = Path().apply {
-        moveTo(bombX - halfW * 0.35f, tailTopY + h * 0.28f)
-        lineTo(bombX - halfW * 1.55f, tailTopY + h * 0.06f)
+        moveTo(bombX - halfW * 0.35f, tailTopY + halfH * 0.55f)
+        lineTo(bombX - halfW * 1.55f, tailTopY + halfH * 0.12f)
         lineTo(bombX - halfW * 1.55f, tailTopY)
-        lineTo(bombX - halfW * 0.3f, tailTopY)
+        lineTo(bombX - halfW * 0.30f, tailTopY)
         close()
     }
     drawPath(leftFin, Color(0xFF334155))
     drawPath(leftFin, Color(0xFF0F172A), style = Stroke(width = 1.2f))
 
     val rightFin = Path().apply {
-        moveTo(bombX + halfW * 0.35f, tailTopY + h * 0.28f)
-        lineTo(bombX + halfW * 1.55f, tailTopY + h * 0.06f)
+        moveTo(bombX + halfW * 0.35f, tailTopY + halfH * 0.55f)
+        lineTo(bombX + halfW * 1.55f, tailTopY + halfH * 0.12f)
         lineTo(bombX + halfW * 1.55f, tailTopY)
-        lineTo(bombX + halfW * 0.3f, tailTopY)
+        lineTo(bombX + halfW * 0.30f, tailTopY)
         close()
     }
     drawPath(rightFin, Color(0xFF334155))
     drawPath(rightFin, Color(0xFF0F172A), style = Stroke(width = 1.2f))
 
     // Cylindrical tail stabilizer ring shroud
-    val ringHeight = h * 0.08f
-    val ringTop = tailTopY + h * 0.04f
+    val ringHeight = (halfH * 0.16f).coerceAtLeast(1f)
+    val ringTop = tailTopY + halfH * 0.08f
+    val ringWidth = (halfW * 2.8f).coerceAtLeast(2f)
     drawRoundRect(
         color = Color(0xFF1E293B),
         topLeft = Offset(bombX - halfW * 1.4f, ringTop),
-        size = androidx.compose.ui.geometry.Size(halfW * 2.8f, ringHeight),
+        size = androidx.compose.ui.geometry.Size(ringWidth, ringHeight),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f)
     )
     drawRoundRect(
         color = Color(0xFF475569),
         topLeft = Offset(bombX - halfW * 1.4f, ringTop),
-        size = androidx.compose.ui.geometry.Size(halfW * 2.8f, ringHeight),
+        size = androidx.compose.ui.geometry.Size(ringWidth, ringHeight),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f),
         style = Stroke(width = 1f)
     )
@@ -468,28 +519,28 @@ private fun DrawScope.drawVerticalFallingBomb(
     // 7. Aerial Bomb Heavy Steel Ordnance Body
     val bombBodyPath = Path().apply {
         // Nose cone contact point at bottom
-        moveTo(bombX, bombY)
+        moveTo(bombX, noseBottomY)
         // Left rounded ogive nose
         cubicTo(
-            bombX - halfW * 0.6f, bombY - h * 0.10f,
-            bombX - halfW, bombY - h * 0.22f,
-            bombX - halfW, bombY - h * 0.40f
+            bombX - halfW * 0.7f, noseBottomY - halfH * 0.40f,
+            bombX - halfW, bombY + halfH * 0.20f,
+            bombX - halfW, bombY - halfH * 0.10f
         )
         // Left cylindrical midsection
-        lineTo(bombX - halfW, bombY - h * 0.72f)
+        lineTo(bombX - halfW, bombY - halfH * 0.45f)
         // Left tapering aft cone
         lineTo(bombX - halfW * 0.38f, tailTopY)
         // Aft cap
         lineTo(bombX + halfW * 0.38f, tailTopY)
         // Right tapering aft cone
-        lineTo(bombX + halfW, bombY - h * 0.72f)
+        lineTo(bombX + halfW, bombY - halfH * 0.45f)
         // Right cylindrical midsection
-        lineTo(bombX + halfW, bombY - h * 0.40f)
+        lineTo(bombX + halfW, bombY - halfH * 0.10f)
         // Right rounded ogive nose
         cubicTo(
-            bombX + halfW, bombY - h * 0.22f,
-            bombX + halfW * 0.6f, bombY - h * 0.10f,
-            bombX, bombY
+            bombX + halfW, bombY + halfH * 0.20f,
+            bombX + halfW * 0.7f, noseBottomY - halfH * 0.40f,
+            bombX, noseBottomY
         )
         close()
     }
@@ -516,8 +567,10 @@ private fun DrawScope.drawVerticalFallingBomb(
     )
 
     // 8. High-Explosive Ordnance Yellow Hazard Band
-    val stripeY1 = bombY - h * 0.46f
-    val stripeY2 = bombY - h * 0.55f
+    val stripeY1 = bombY + halfH * 0.10f
+    val stripeY2 = bombY - halfH * 0.10f
+    val bandW = (bombWidth - 2f).coerceAtLeast(1f)
+    val bandH = (stripeY1 - stripeY2).coerceAtLeast(1f)
     drawRect(
         brush = Brush.horizontalGradient(
             colors = listOf(Color(0xFFD97706), Color(0xFFFDE047), Color(0xFFD97706)),
@@ -525,28 +578,29 @@ private fun DrawScope.drawVerticalFallingBomb(
             endX = bombX + halfW
         ),
         topLeft = Offset(bombX - halfW + 1f, stripeY2),
-        size = androidx.compose.ui.geometry.Size(bombWidth - 2f, stripeY1 - stripeY2)
+        size = androidx.compose.ui.geometry.Size(bandW, bandH)
     )
 
     // 9. Attacker identification accent ring
     val accentColor = if (isBotAttacker) Color(0xFFEF4444) else Color(0xFF38BDF8)
-    val accentStripeY = bombY - h * 0.64f
+    val accentStripeY = bombY - halfH * 0.30f
+    val accentH = (halfH * 0.08f).coerceAtLeast(1f)
     drawRect(
         color = accentColor,
         topLeft = Offset(bombX - halfW + 1f, accentStripeY),
-        size = androidx.compose.ui.geometry.Size(bombWidth - 2f, h * 0.04f)
+        size = androidx.compose.ui.geometry.Size(bandW, accentH)
     )
 
     // 10. Contact Detonation Fuze Pin at the nose tip
     drawCircle(
         color = Color(0xFF94A3B8),
         radius = 2.5f * depthScale,
-        center = Offset(bombX, bombY)
+        center = Offset(bombX, noseBottomY)
     )
     drawCircle(
         color = Color(0xFFF8FAFC),
         radius = 1.2f * depthScale,
-        center = Offset(bombX, bombY)
+        center = Offset(bombX, noseBottomY)
     )
 }
 
@@ -561,83 +615,110 @@ private fun DrawScope.drawFlyingProjectile(
 }
 
 private fun DrawScope.drawExplosionImpact(center: Offset, sizePx: Float, progress: Float) {
-    val maxRadius = sizePx * 0.95f
-    val currentRadius = maxRadius * progress
+    if (progress <= 0f) return
+    val clampedProgress = progress.coerceIn(0.01f, 1f)
+    val maxRadius = (sizePx * 0.72f).coerceAtLeast(8f)
+    val currentRadius = (maxRadius * clampedProgress).coerceAtLeast(1.5f)
 
-    // Expanding shockwave ring
+    // 1. Sleek expanding shockwave ring (soft amber/orange, contained and crisp)
+    val strokeWidth = (2.2f * (1f - clampedProgress)).coerceAtLeast(0.5f)
+    val ringRadius = (currentRadius * 1.25f).coerceAtLeast(1.5f)
     drawCircle(
-        color = Color(0xFFFBBF24).copy(alpha = (1f - progress).coerceIn(0f, 1f)),
-        radius = currentRadius * 1.35f,
+        color = Color(0xFFF59E0B).copy(alpha = (0.85f * (1f - clampedProgress)).coerceIn(0f, 1f)),
+        radius = ringRadius,
         center = center,
-        style = Stroke(width = 3.5f * (1f - progress))
+        style = Stroke(width = strokeWidth)
     )
 
-    // Fireball radial gradient
-    val fireAlpha = (1f - progress * 0.75f).coerceIn(0f, 1f)
+    // 2. Focused fireball core - streamlined, crisp, radiant gradient with guaranteed positive radius
+    val fireAlpha = (1f - clampedProgress * 0.75f).coerceIn(0f, 1f)
+    val safeRadius = currentRadius.coerceAtLeast(1.5f)
     drawCircle(
         brush = Brush.radialGradient(
             colors = listOf(
                 Color(0xFFFFFBEB).copy(alpha = fireAlpha),
-                Color(0xFFF59E0B).copy(alpha = fireAlpha),
-                Color(0xFFDC2626).copy(alpha = fireAlpha * 0.85f),
-                Color.Transparent
+                Color(0xFFFBBF24).copy(alpha = fireAlpha * 0.95f),
+                Color(0xFFEF4444).copy(alpha = fireAlpha * 0.75f),
+                Color(0xFFDC2626).copy(alpha = 0f)
             ),
             center = center,
-            radius = currentRadius
+            radius = safeRadius
         ),
-        radius = currentRadius,
+        radius = safeRadius,
         center = center
     )
 
-    // Radiating fiery shrapnel sparks
-    val sparkCount = 12
-    for (i in 0 until sparkCount) {
-        val angle = (i * 2.0 * PI / sparkCount)
-        val sparkDist = currentRadius * (0.6f + 0.5f * (i % 3))
-        val sparkPos = Offset(
-            (center.x + cos(angle) * sparkDist).toFloat(),
-            (center.y + sin(angle) * sparkDist).toFloat()
-        )
+    // 3. Compact glowing central flash point during initial detonation
+    if (clampedProgress < 0.5f) {
+        val flashAlpha = (1f - clampedProgress / 0.5f).coerceIn(0f, 1f)
+        val coreRadius = (currentRadius * 0.40f).coerceAtLeast(1f)
         drawCircle(
-            color = Color(0xFFFDE047).copy(alpha = (1f - progress).coerceIn(0f, 1f)),
-            radius = 3.5f * (1f - progress),
-            center = sparkPos
+            color = Color.White.copy(alpha = flashAlpha),
+            radius = coreRadius,
+            center = center
         )
+    }
+
+    // 4. Clean, focused blast sparks (reduced count from 12 to 6 for a sleek, aesthetic look)
+    val sparkAlpha = (1f - clampedProgress).coerceIn(0f, 1f)
+    if (sparkAlpha > 0.05f) {
+        val sparkCount = 6
+        for (i in 0 until sparkCount) {
+            val angle = (i * 2.0 * PI / sparkCount) + 0.25
+            val sparkDist = currentRadius * 0.95f
+            val sparkPos = Offset(
+                (center.x + cos(angle) * sparkDist).toFloat(),
+                (center.y + sin(angle) * sparkDist).toFloat()
+            )
+            val sparkRadius = (2.2f * (1f - clampedProgress)).coerceAtLeast(0.5f)
+            drawCircle(
+                color = Color(0xFFFDE047).copy(alpha = sparkAlpha),
+                radius = sparkRadius,
+                center = sparkPos
+            )
+        }
     }
 }
 
 private fun DrawScope.drawWaterSplashImpact(center: Offset, sizePx: Float, progress: Float) {
-    val maxRadius = sizePx * 0.80f
-    val currentRadius = maxRadius * progress
+    if (progress <= 0f) return
+    val clampedProgress = progress.coerceIn(0.01f, 1f)
+    val maxRadius = (sizePx * 0.65f).coerceAtLeast(8f)
+    val currentRadius = (maxRadius * clampedProgress).coerceAtLeast(1.5f)
 
     // Concentric ocean ripples
+    val stroke1 = (2.2f * (1f - clampedProgress)).coerceAtLeast(0.5f)
     drawCircle(
-        color = Color(0xFF38BDF8).copy(alpha = (1f - progress).coerceIn(0f, 1f)),
-        radius = currentRadius * 1.4f,
+        color = Color(0xFF38BDF8).copy(alpha = (0.85f * (1f - clampedProgress)).coerceIn(0f, 1f)),
+        radius = (currentRadius * 1.3f).coerceAtLeast(1.5f),
         center = center,
-        style = Stroke(width = 3f * (1f - progress))
+        style = Stroke(width = stroke1)
     )
+    val stroke2 = (1.5f * (1f - clampedProgress)).coerceAtLeast(0.5f)
     drawCircle(
-        color = Color(0xFF0284C7).copy(alpha = (1f - progress * 0.7f).coerceIn(0f, 1f)),
-        radius = currentRadius * 0.9f,
+        color = Color(0xFF0284C7).copy(alpha = (0.7f * (1f - clampedProgress * 0.8f)).coerceIn(0f, 1f)),
+        radius = (currentRadius * 0.85f).coerceAtLeast(1.5f),
         center = center,
-        style = Stroke(width = 2.2f * (1f - progress))
+        style = Stroke(width = stroke2)
     )
 
-    // Upward plume water splash droplets
-    val splashAlpha = (1f - progress).coerceIn(0f, 1f)
-    val dropCount = 8
-    for (i in 0 until dropCount) {
-        val angle = (i * PI / (dropCount - 1)) - PI
-        val dropDist = currentRadius * (0.8f + 0.4f * (i % 2))
-        val dropPos = Offset(
-            (center.x + cos(angle) * dropDist).toFloat(),
-            (center.y + sin(angle) * dropDist * 0.65f).toFloat() // Perspective oval
-        )
-        drawCircle(
-            color = Color(0xFFE0F2FE).copy(alpha = splashAlpha),
-            radius = 3.5f * (1f - progress * 0.5f),
-            center = dropPos
-        )
+    // Upward plume water splash droplets (6 droplets for a clean look)
+    val splashAlpha = (1f - clampedProgress).coerceIn(0f, 1f)
+    if (splashAlpha > 0.05f) {
+        val dropCount = 6
+        for (i in 0 until dropCount) {
+            val angle = (i * PI / (dropCount - 1)) - PI
+            val dropDist = currentRadius * 0.9f
+            val dropPos = Offset(
+                (center.x + cos(angle) * dropDist).toFloat(),
+                (center.y + sin(angle) * dropDist * 0.65f).toFloat() // Perspective oval
+            )
+            val dropRadius = (2.5f * (1f - clampedProgress * 0.5f)).coerceAtLeast(0.5f)
+            drawCircle(
+                color = Color(0xFFE0F2FE).copy(alpha = splashAlpha),
+                radius = dropRadius,
+                center = dropPos
+            )
+        }
     }
 }

@@ -135,13 +135,15 @@ object BattleshipShipGraphics {
     ) {
         Box(modifier = modifier) {
             Canvas(modifier = Modifier.fillMaxSize()) {
+                if (size.width <= 1f || size.height <= 1f) return@Canvas
                 val isVert = orientation == ShipOrientation.VERTICAL
                 val degrees = if (isVert) 90f else 0f
+                val safeSegmentIndex = segmentIndex.coerceIn(0, (shipType.length - 1).coerceAtLeast(0))
 
                 rotate(degrees, pivot = center) {
                     drawSegment(
                         shipType = shipType,
-                        segmentIndex = segmentIndex,
+                        segmentIndex = safeSegmentIndex,
                         isSunk = isSunk,
                         isSelected = isSelected
                     )
@@ -400,25 +402,31 @@ object BattleshipShipGraphics {
     private fun DrawScope.drawLocalizedDamage() {
         val w = size.width
         val h = size.height
+        if (w <= 1f || h <= 1f) return
         val c = Offset(w * 0.5f, h * 0.5f)
+        val breachRadius = (w * 0.32f).coerceAtLeast(1f)
+        val fireRadius = (w * 0.35f).coerceAtLeast(1.5f)
 
         // Charred hull breach hole
-        drawCircle(DamageSmoke, radius = w * 0.32f, center = c)
+        drawCircle(DamageSmoke, radius = breachRadius, center = c)
 
         // Intense inner fire core
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(DamageEmbers, DamageFire, Color.Transparent),
                 center = c,
-                radius = w * 0.35f
+                radius = fireRadius
             ),
-            radius = w * 0.35f,
+            radius = fireRadius,
             center = c
         )
 
         // Fire sparks
-        drawCircle(DamageEmbers, radius = 3.5f, center = Offset(w * 0.35f, h * 0.35f))
-        drawCircle(DamageFire, radius = 3.0f, center = Offset(w * 0.65f, h * 0.40f))
-        drawCircle(DamageEmbers, radius = 2.5f, center = Offset(w * 0.50f, h * 0.70f))
+        val spark1 = (3.5f).coerceAtMost(w * 0.15f).coerceAtLeast(0.5f)
+        val spark2 = (3.0f).coerceAtMost(w * 0.12f).coerceAtLeast(0.5f)
+        val spark3 = (2.5f).coerceAtMost(w * 0.10f).coerceAtLeast(0.5f)
+        drawCircle(DamageEmbers, radius = spark1, center = Offset(w * 0.35f, h * 0.35f))
+        drawCircle(DamageFire, radius = spark2, center = Offset(w * 0.65f, h * 0.40f))
+        drawCircle(DamageEmbers, radius = spark3, center = Offset(w * 0.50f, h * 0.70f))
     }
 }
