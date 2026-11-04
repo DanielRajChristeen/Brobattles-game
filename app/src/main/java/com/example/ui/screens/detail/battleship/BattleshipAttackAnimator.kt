@@ -50,12 +50,12 @@ import kotlin.math.sin
 
 /**
  * Centrally configurable attack animation timings for Battleship combat.
- * Durations are tuned to provide deliberate, visually clear naval warfare animations (~6.9s total).
+ * Durations are tuned to provide deliberate, visually clear naval warfare animations (~6.4s total).
  */
 object AttackTimingConfig {
     const val THINKING_MS = 1200L
     const val TARGET_LOCK_MS = 1000L
-    const val PROJECTILE_FLIGHT_MS = 1500L
+    const val PROJECTILE_FLIGHT_MS = 1000L
     const val IMPACT_MS = 1200L
     const val RESULT_ANNOUNCEMENT_MS = 1500L
     const val TURN_TRANSITION_MS = 500L

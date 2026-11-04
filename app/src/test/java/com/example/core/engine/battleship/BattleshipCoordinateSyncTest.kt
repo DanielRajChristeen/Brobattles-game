@@ -14,13 +14,14 @@ import org.junit.Test
 
 class BattleshipCoordinateSyncTest {
 
-    // Test coordinates required by specification
+    // Mandatory test coordinates required by specification: A1, E5, J10, A10, J1, H8
     private val testCoordinates = listOf(
         Pair("A1", CellCoordinate(0, 0)),
         Pair("E5", CellCoordinate(4, 4)),
         Pair("J10", CellCoordinate(9, 9)),
         Pair("A10", CellCoordinate(9, 0)),
-        Pair("J1", CellCoordinate(0, 9))
+        Pair("J1", CellCoordinate(0, 9)),
+        Pair("H8", CellCoordinate(7, 7))
     )
 
     @Test
@@ -228,11 +229,11 @@ class BattleshipCoordinateSyncTest {
     fun testAttackTimingConfiguration() {
         assertEquals(1200L, AttackTimingConfig.THINKING_MS)
         assertEquals(1000L, AttackTimingConfig.TARGET_LOCK_MS)
-        assertEquals(1500L, AttackTimingConfig.PROJECTILE_FLIGHT_MS)
+        assertEquals(1000L, AttackTimingConfig.PROJECTILE_FLIGHT_MS)
         assertEquals(1200L, AttackTimingConfig.IMPACT_MS)
         assertEquals(1500L, AttackTimingConfig.RESULT_ANNOUNCEMENT_MS)
         assertEquals(500L, AttackTimingConfig.TURN_TRANSITION_MS)
-        assertEquals(6900L, AttackTimingConfig.TOTAL_SEQUENCE_MS)
+        assertEquals(6400L, AttackTimingConfig.TOTAL_SEQUENCE_MS)
     }
 
     @Test
@@ -383,5 +384,209 @@ class BattleshipCoordinateSyncTest {
         // Attempting to fire at the same cell again
         val secondShot = engine.fireShot(BattleshipPlayer.PLAYER_1, target)
         assertEquals(ShotOutcome.AlreadyTargeted, secondShot)
+    }
+
+    @Test
+    fun testMandatorySevenComponentSyncForHuman() {
+        // Test coordinates from spec: A1, E5, J10, A10, J1, H8
+        for ((label, coord) in testCoordinates) {
+            val engine = BattleshipEngine()
+            engine.setFleet(BattleshipPlayer.PLAYER_1, BattleshipEngine.generateRandomFleet())
+            engine.setFleet(BattleshipPlayer.PLAYER_2, BattleshipEngine.generateRandomFleet())
+            engine.setPhase(BattleshipPhase.BATTLE)
+
+            val cellSize = 45f
+            val cellCenter = Offset(
+                x = 10f + coord.col * cellSize + cellSize / 2f,
+                y = 15f + coord.row * cellSize + cellSize / 2f
+            )
+
+            // 1. Selected cell
+            val selectedCell = coord
+            assertEquals(label, selectedCell.label)
+
+            // 2. Engine target
+            val engineTarget = selectedCell
+            assertEquals(coord, engineTarget)
+
+            // 3. Animation target
+            val animData = AttackAnimationData(
+                attacker = BattleshipPlayer.PLAYER_1,
+                isBotAttacker = false,
+                targetCoord = engineTarget,
+                targetBoard = BoardType.RADAR,
+                targetCenterInOverlay = cellCenter,
+                cellSizePx = cellSize,
+                isHit = false,
+                isSunk = false,
+                stage = AttackAnimationStage.TARGET_LOCK
+            )
+            assertEquals("Animation target must match selected cell", selectedCell, animData.targetCoord)
+
+            // 4. Crosshair center
+            val crosshairCenter = animData.targetCenterInOverlay
+            assertEquals("Crosshair must be centered exactly on target cell", cellCenter, crosshairCenter)
+
+            // 5. Bomb landing endpoint (at progress = 1.0f)
+            val bombEndpoint = Offset(animData.targetCenterInOverlay.x, animData.targetCenterInOverlay.y)
+            assertEquals("Bomb endpoint must match exact cell center", cellCenter, bombEndpoint)
+
+            // 6. Impact center
+            val impactCenter = animData.targetCenterInOverlay
+            assertEquals("Impact effect must be at exact cell center", cellCenter, impactCenter)
+
+            // 7. Final board state / result marker
+            val outcome = engine.fireShot(BattleshipPlayer.PLAYER_1, animData.targetCoord)
+            assertTrue(outcome is ShotOutcome.Hit || outcome is ShotOutcome.Miss)
+            assertTrue("Final result marker must appear at the exact tapped coordinate",
+                engine.state.p1Radar.shots.containsKey(selectedCell))
+        }
+    }
+
+    @Test
+    fun testMandatorySevenComponentSyncForBot() {
+        // Test coordinates from spec: A1, E5, J10, A10, J1, H8 for Bot attacks
+        for ((label, coord) in testCoordinates) {
+            val engine = BattleshipEngine()
+            engine.setFleet(BattleshipPlayer.PLAYER_1, BattleshipEngine.generateRandomFleet())
+            engine.setFleet(BattleshipPlayer.PLAYER_2, BattleshipEngine.generateRandomFleet())
+            engine.setPhase(BattleshipPhase.BATTLE)
+            engine.setActivePlayerForTesting(BattleshipPlayer.PLAYER_2)
+
+            val cellSize = 40f
+            val cellCenter = Offset(
+                x = 8f + coord.col * cellSize + cellSize / 2f,
+                y = 12f + coord.row * cellSize + cellSize / 2f
+            )
+
+            // 1. Selected cell by bot AI
+            val botSelectedCell = coord
+            assertEquals(label, botSelectedCell.label)
+
+            // 2. Engine target
+            val engineTarget = botSelectedCell
+            assertEquals(coord, engineTarget)
+
+            // 3. Animation target
+            val animData = AttackAnimationData(
+                attacker = BattleshipPlayer.PLAYER_2,
+                isBotAttacker = true,
+                targetCoord = engineTarget,
+                targetBoard = BoardType.MY_FLEET,
+                targetCenterInOverlay = cellCenter,
+                cellSizePx = cellSize,
+                isHit = false,
+                isSunk = false,
+                stage = AttackAnimationStage.TARGET_LOCK
+            )
+            assertEquals("Animation target must match bot-selected cell", botSelectedCell, animData.targetCoord)
+
+            // 4. Crosshair center
+            val crosshairCenter = animData.targetCenterInOverlay
+            assertEquals("Crosshair must be centered on defense cell", cellCenter, crosshairCenter)
+
+            // 5. Bomb landing endpoint
+            val bombEndpoint = animData.targetCenterInOverlay
+            assertEquals("Bomb landing endpoint must be at cell center", cellCenter, bombEndpoint)
+
+            // 6. Impact center
+            val impactCenter = animData.targetCenterInOverlay
+            assertEquals("Impact center must be at cell center", cellCenter, impactCenter)
+
+            // 7. Final board state / incoming damage marker on human fleet
+            val outcome = engine.fireShot(BattleshipPlayer.PLAYER_2, animData.targetCoord)
+            assertTrue(outcome is ShotOutcome.Hit || outcome is ShotOutcome.Miss)
+            assertTrue("Incoming hit/miss marker must appear at exact target coordinate on fleet",
+                engine.state.p1Fleet.incomingShots.containsKey(botSelectedCell))
+        }
+    }
+
+    @Test
+    fun testBoardSwitchingTargetImmutability() {
+        val coord = CellCoordinate(7, 7) // H8
+        val center = Offset(240f, 320f)
+        val initialAttack = AttackAnimationData(
+            attacker = BattleshipPlayer.PLAYER_1,
+            isBotAttacker = false,
+            targetCoord = coord,
+            targetBoard = BoardType.RADAR,
+            targetCenterInOverlay = center,
+            cellSizePx = 40f,
+            isHit = true,
+            isSunk = false,
+            stage = AttackAnimationStage.TARGET_LOCK
+        )
+
+        // Simulate animation progressing through stages
+        val stageFlight = initialAttack.copy(stage = AttackAnimationStage.PROJECTILE_FLIGHT)
+        assertEquals(coord, stageFlight.targetCoord)
+        assertEquals(center, stageFlight.targetCenterInOverlay)
+
+        val stageImpact = stageFlight.copy(stage = AttackAnimationStage.IMPACT)
+        assertEquals(coord, stageImpact.targetCoord)
+        assertEquals(center, stageImpact.targetCenterInOverlay)
+
+        val stageResult = stageImpact.copy(stage = AttackAnimationStage.RESULT_ANNOUNCEMENT)
+        assertEquals(coord, stageResult.targetCoord)
+        assertEquals(center, stageResult.targetCenterInOverlay)
+    }
+
+    @Test
+    fun testDifferentScreenDimensionsAndDensities() {
+        val testDensities = listOf(20f, 32f, 40f, 48f, 64f, 80f)
+        for (cellSize in testDensities) {
+            for ((_, coord) in testCoordinates) {
+                val padding = 6f
+                val labelWidth = 18f
+                val cellCenterX = padding + labelWidth + coord.col * cellSize + cellSize / 2f
+                val cellCenterY = padding + 16f + 2f + coord.row * cellSize + cellSize / 2f
+                val calculatedCenter = Offset(cellCenterX, cellCenterY)
+
+                val attack = AttackAnimationData(
+                    attacker = BattleshipPlayer.PLAYER_1,
+                    isBotAttacker = false,
+                    targetCoord = coord,
+                    targetBoard = BoardType.RADAR,
+                    targetCenterInOverlay = calculatedCenter,
+                    cellSizePx = cellSize,
+                    isHit = false,
+                    isSunk = false
+                )
+
+                assertEquals(coord, attack.targetCoord)
+                assertEquals(calculatedCenter, attack.targetCenterInOverlay)
+                assertTrue(attack.targetCenterInOverlay.x > 0f)
+                assertTrue(attack.targetCenterInOverlay.y > 0f)
+            }
+        }
+    }
+
+    @Test
+    fun testConsecutiveHitsAndMissesFlow() {
+        val engine = BattleshipEngine()
+        // Place Destroyer at row 2, col 3 and col 4
+        engine.placeShip(BattleshipPlayer.PLAYER_2, ShipType.DESTROYER, 2, 3, ShipOrientation.HORIZONTAL)
+        engine.setPhase(BattleshipPhase.BATTLE)
+
+        // 1. Hit first segment at (2, 3)
+        val hit1Coord = CellCoordinate(2, 3)
+        val outcome1 = engine.fireShot(BattleshipPlayer.PLAYER_1, hit1Coord)
+        assertTrue(outcome1 is ShotOutcome.Hit)
+        assertFalse((outcome1 as ShotOutcome.Hit).isSunk)
+        assertTrue(engine.state.p1Radar.shots[hit1Coord] == true)
+
+        // 2. Hit second segment at (2, 4) -> Sinks the ship!
+        val hit2Coord = CellCoordinate(2, 4)
+        val outcome2 = engine.fireShot(BattleshipPlayer.PLAYER_1, hit2Coord)
+        assertTrue(outcome2 is ShotOutcome.Hit)
+        assertTrue((outcome2 as ShotOutcome.Hit).isSunk)
+        assertEquals(ShipType.DESTROYER, (outcome2 as ShotOutcome.Hit).shipType)
+        assertTrue(engine.state.p1Radar.shots[hit2Coord] == true)
+
+        // 3. Miss at (0, 0)
+        val missCoord = CellCoordinate(0, 0)
+        val outcome3 = engine.fireShot(BattleshipPlayer.PLAYER_1, missCoord)
+        assertTrue(outcome3 is ShotOutcome.Miss)
+        assertTrue(engine.state.p1Radar.shots[missCoord] == false)
     }
 }

@@ -212,7 +212,7 @@ fun LudoGameView(
                 soundManager.playSoldierHop(settings.soundEnabled)
                 soundManager.vibrateHop(settings.vibrationEnabled)
 
-                val hopDurationMs = 155L
+                val hopDurationMs = if (fromStep == -1) 320L else 230L
                 val startTime = System.currentTimeMillis()
                 while (true) {
                     val elapsed = System.currentTimeMillis() - startTime
@@ -265,6 +265,11 @@ fun LudoGameView(
                 capturedAnimatingTokens = emptyList()
             }
 
+            // Finished visual hops and captures
+            animatingToken = null
+            capturedAnimatingTokens = emptyList()
+            isAnimating = false
+
             // 4. Update Authoritative Game State from Engine
             val nextState = engine.moveToken(tokenId)
 
@@ -303,7 +308,8 @@ fun LudoGameView(
                     "LUDO_MOVE" -> {
                         val tokenId = action.payload.toIntOrNull()
                         if (isHost && tokenId != null && !isAnimating) {
-                            performAnimatedMove(tokenId) { finalState ->
+                            val movingColor = gameState.currentPlayer.color
+                            performAnimatedMove(tokenId, expectedColor = movingColor) { finalState ->
                                 multiplayerManager.sendAction("LUDO_SYNC", serializeLudoState(finalState))
                             }
                         }
@@ -473,48 +479,47 @@ fun LudoGameView(
     LaunchedEffect(gameState.currentTurnIndex, gameState.isGameOver) {
         if (selectedMode == GameMode.SOLO &&
             !gameState.isGameOver &&
-            gameState.currentPlayer.isBot &&
-            botJob?.isActive != true
+            gameState.currentPlayer.isBot
         ) {
-            botJob = scope.launch {
-                isBotThinking = true
-                try {
-                    while (!gameState.isGameOver && gameState.currentPlayer.isBot && gameState.canRoll) {
+            isBotThinking = true
+            try {
+                while (!gameState.isGameOver && gameState.currentPlayer.isBot && gameState.canRoll) {
+                    delay(700)
+                    if (gameState.isGameOver || !gameState.currentPlayer.isBot || !gameState.canRoll) break
+
+                    // 1. Bot rolls 3D dice
+                    soundManager.playDiceRoll(settings.soundEnabled)
+                    soundManager.vibrateMove(settings.vibrationEnabled)
+                    isRolling = true
+
+                    val rolledState = engine.rollDice()
+                    val roll = rolledState.diceRoll ?: 6
+                    displayedDice = roll
+                    delay(850)
+                    isRolling = false
+                    gameState = rolledState
+
+                    // 2. If legal moves exist, bot chooses move and executes hopping animation
+                    if (rolledState.selectableTokenIds.isNotEmpty()) {
                         delay(600)
-                        if (gameState.isGameOver || !gameState.currentPlayer.isBot || !gameState.canRoll) break
-
-                        // 1. Bot rolls 3D dice
-                        soundManager.playDiceRoll(settings.soundEnabled)
-                        soundManager.vibrateMove(settings.vibrationEnabled)
-                        isRolling = true
-
-                        val rolledState = engine.rollDice()
-                        val roll = rolledState.diceRoll ?: 6
-                        displayedDice = roll
-                        delay(850)
-                        isRolling = false
-                        gameState = rolledState
-
-                        // 2. If legal moves exist, bot chooses move and executes hopping animation
-                        if (rolledState.selectableTokenIds.isNotEmpty()) {
-                            delay(500)
-                            val botMoveTokenId = bot.decideMove(rolledState, botDifficulty)
-                            if (botMoveTokenId != null) {
-                                performAnimatedMove(botMoveTokenId, expectedColor = rolledState.currentPlayer.color)
-                            } else {
-                                break
-                            }
+                        val botMoveTokenId = bot.decideMove(rolledState, botDifficulty)
+                        if (botMoveTokenId != null) {
+                            performAnimatedMove(botMoveTokenId, expectedColor = rolledState.currentPlayer.color)
+                            delay(400) // Pause so user clearly sees where opponent puppet landed
                         } else {
-                            // Turn already passed to next player in engine.rollDice
                             break
                         }
+                    } else {
+                        // Pause so player clearly sees what bot rolled before turn passes
+                        delay(1200)
+                        break
                     }
-                } catch (e: Exception) {
-                    gameState = engine.state
-                } finally {
-                    isRolling = false
-                    isBotThinking = false
                 }
+            } catch (e: Exception) {
+                gameState = engine.state
+            } finally {
+                isRolling = false
+                isBotThinking = false
             }
         }
     }

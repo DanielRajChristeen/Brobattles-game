@@ -49,6 +49,7 @@ object LudoPawnRenderer {
         scale: Float = 1.0f
     ) {
         with(drawScope) {
+            if (cellSize <= 0.01f || scale <= 0.01f) return
             val primaryColor = Color(color.primaryColorHex)
             val lightColor = Color(color.lightColorHex)
             val darkColor = Color(color.darkColorHex)
@@ -98,11 +99,12 @@ object LudoPawnRenderer {
 
             // 3. Flared Pedestal Base (Skirt)
             val baseRectTop = pawnY - baseHeight / 2f
+            val baseGradRadius = (baseWidth * 0.75f).coerceAtLeast(0.5f)
             drawOval(
                 brush = Brush.radialGradient(
                     colors = listOf(lightColor, primaryColor, darkColor),
                     center = Offset(cx - baseWidth * 0.22f, pawnY - baseHeight * 0.22f),
-                    radius = baseWidth * 0.75f
+                    radius = baseGradRadius
                 ),
                 topLeft = Offset(cx - baseWidth / 2f, baseRectTop),
                 size = Size(baseWidth, baseHeight)
@@ -182,6 +184,7 @@ object LudoPawnRenderer {
             val headCenter = Offset(cx, neckY - headRadius * 0.78f)
 
             // 3D Spherical Radial Gradient
+            val headGradRadius = (headRadius * 1.35f).coerceAtLeast(0.5f)
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
@@ -191,7 +194,7 @@ object LudoPawnRenderer {
                         darkColor
                     ),
                     center = Offset(headCenter.x - headRadius * 0.32f, headCenter.y - headRadius * 0.32f),
-                    radius = headRadius * 1.35f
+                    radius = headGradRadius
                 ),
                 radius = headRadius,
                 center = headCenter

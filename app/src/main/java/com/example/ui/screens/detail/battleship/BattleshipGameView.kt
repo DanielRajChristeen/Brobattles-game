@@ -433,7 +433,7 @@ fun BattleshipGameView(
                 soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
                 delay(AttackTimingConfig.TARGET_LOCK_MS)
 
-                // Stage 2: Bomb Flight / Free Fall (1,500 ms)
+                // Stage 2: Bomb Flight / Free Fall (1,000 ms)
                 activeAttack = activeAttack?.copy(
                     stage = AttackAnimationStage.PROJECTILE_FLIGHT,
                     bannerSubtitle = "Bomb falling from above..."
@@ -559,7 +559,7 @@ fun BattleshipGameView(
                 soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
                 delay(AttackTimingConfig.TARGET_LOCK_MS)
 
-                // Stage 2: Bomb Flight / Free Fall (1,500 ms)
+                // Stage 2: Bomb Flight / Free Fall (1,000 ms)
                 activeAttack = activeAttack?.copy(
                     stage = AttackAnimationStage.PROJECTILE_FLIGHT,
                     bannerSubtitle = "Bomb dropping on your fleet..."
