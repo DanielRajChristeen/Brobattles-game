@@ -448,14 +448,19 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Look & Feel Theme Group
+        // Appearance / Theme Group
         Text(
-            text = "LOOK & FEEL",
+            text = "APPEARANCE",
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = FontWeight.Black,
                 letterSpacing = 1.sp
             ),
             color = MaterialTheme.colorScheme.onBackground
+        )
+        Text(
+            text = "Theme preference (Light, Dark, or System Default)",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(10.dp))
 

@@ -43,6 +43,9 @@ data class AppThemeColors(
     val icon: Color,
     val iconSecondary: Color,
     val shadow: Color,
+    val success: Color = Color(0xFF16A34A),
+    val warning: Color = Color(0xFFD97706),
+    val error: Color = Color(0xFFDC2626),
     val isDark: Boolean,
 
     // Game Brand Accents (Preserved across both themes)
@@ -67,24 +70,30 @@ val DarkThemeColors = AppThemeColors(
     icon = Color(0xFFF8FAFC),
     iconSecondary = Color(0xFF94A3B8),
     shadow = Color(0x80000000),
+    success = Color(0xFF22C55E),
+    warning = Color(0xFFFBBF24),
+    error = Color(0xFFEF4444),
     isDark = true
 )
 
 val LightThemeColors = AppThemeColors(
-    background = Color(0xFFF1F5F9),        // Light cool slate-gray canvas
-    surface = Color(0xFFFFFFFF),           // Pure clean white card
-    surfaceVariant = Color(0xFFE2E8F0),    // Subtle distinct secondary surface
-    primaryText = Color(0xFF0F172A),       // Deep navy / charcoal - rich contrast
-    secondaryText = Color(0xFF475569),     // Muted slate gray - readable, not pale pastel
-    border = Color(0xFFCBD5E1),            // Medium-light neutral gray border (clear definition)
-    borderLight = Color(0xFFE2E8F0),
-    accent = Color(0xFF7C3AED),            // Vibrant royal purple
+    background = Color(0xFFF5F7FB),        // Clean light gaming canvas (per Phase 3 spec)
+    surface = Color(0xFFFFFFFF),           // Pure clean white card (per Phase 3 spec)
+    surfaceVariant = Color(0xFFE8EEF5),    // Subtle distinct secondary surface
+    primaryText = Color(0xFF172033),       // Deep navy / charcoal - rich contrast (per Phase 3 spec)
+    secondaryText = Color(0xFF64748B),     // Muted slate gray - readable, not pale pastel (per Phase 3 spec)
+    border = Color(0xFFDCE3EC),            // Borders and dividers (per Phase 3 spec)
+    borderLight = Color(0xFFE8EEF5),
+    accent = Color(0xFF7C3AED),            // Vibrant royal purple gaming accent
     selectedSurface = Color(0xFF7C3AED).copy(alpha = 0.12f),
     button = Color(0xFF7C3AED),
     buttonText = Color.White,
-    icon = Color(0xFF0F172A),              // Deep charcoal icon
+    icon = Color(0xFF172033),              // Deep charcoal icon
     iconSecondary = Color(0xFF64748B),
-    shadow = Color(0x1A0F172A),
+    shadow = Color(0x14172033),
+    success = Color(0xFF16A34A),
+    warning = Color(0xFFD97706),
+    error = Color(0xFFDC2626),
     isDark = false
 )
 

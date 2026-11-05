@@ -761,18 +761,27 @@ fun BattleshipGameView(
         onExit()
     }
 
+    val isDark = colors.isDark
+    val battleshipBg = Brush.verticalGradient(
+        if (isDark) {
+            listOf(
+                Color(0xFF0A192F), // Deep ocean naval navy
+                Color(0xFF0F2B48), // Ocean water teal-blue
+                Color(0xFF061426)
+            )
+        } else {
+            listOf(
+                Color(0xFFE0F2FE), // Clean light ocean blue
+                Color(0xFFBAE6FD), // Sky blue water
+                Color(0xFFF0F9FF)  // Soft nautical wash
+            )
+        }
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF0A192F), // Deep ocean naval navy
-                        Color(0xFF0F2B48), // Ocean water teal-blue
-                        Color(0xFF061426)
-                    )
-                )
-            )
+            .background(battleshipBg)
     ) {
         Column(
             modifier = Modifier
@@ -792,8 +801,8 @@ fun BattleshipGameView(
                     modifier = Modifier
                         .size(42.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF1E293B))
-                        .border(1.5.dp, Color(0xFF334155), CircleShape)
+                        .background(if (isDark) Color(0xFF1E293B) else Color(0xFFFFFFFF))
+                        .border(1.5.dp, if (isDark) Color(0xFF334155) else Color(0xFFBAE6FD), CircleShape)
                         .bouncyClickable(onClick = onExit)
                         .testTag("battleship_back_button"),
                     contentAlignment = Alignment.Center
@@ -801,7 +810,7 @@ fun BattleshipGameView(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Exit",
-                        tint = Color.White
+                        tint = if (isDark) Color.White else Color(0xFF0F172A)
                     )
                 }
 
@@ -812,7 +821,7 @@ fun BattleshipGameView(
                             fontWeight = FontWeight.Black,
                             letterSpacing = 1.5.sp
                         ),
-                        color = Color.White
+                        color = if (isDark) Color.White else Color(0xFF0F172A)
                     )
                     val modeLabel = when (selectedMode) {
                         GameMode.SOLO -> "VS BOT (HUNT & TARGET)"
@@ -822,7 +831,7 @@ fun BattleshipGameView(
                     Text(
                         text = modeLabel,
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = Color(0xFF38BDF8)
+                        color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
                     )
                 }
 
@@ -831,8 +840,8 @@ fun BattleshipGameView(
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF1E293B))
-                            .border(1.5.dp, Color(0xFF334155), CircleShape)
+                            .background(if (isDark) Color(0xFF1E293B) else Color(0xFFFFFFFF))
+                            .border(1.5.dp, if (isDark) Color(0xFF334155) else Color(0xFFBAE6FD), CircleShape)
                             .bouncyClickable { showHelpDialog = true }
                             .testTag("battleship_help_button"),
                         contentAlignment = Alignment.Center
@@ -840,7 +849,7 @@ fun BattleshipGameView(
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = "Help",
-                            tint = Color.White
+                            tint = if (isDark) Color.White else Color(0xFF0F172A)
                         )
                     }
 
@@ -848,8 +857,8 @@ fun BattleshipGameView(
                         modifier = Modifier
                             .size(42.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF1E293B))
-                            .border(1.5.dp, Color(0xFF334155), CircleShape)
+                            .background(if (isDark) Color(0xFF1E293B) else Color(0xFFFFFFFF))
+                            .border(1.5.dp, if (isDark) Color(0xFF334155) else Color(0xFFBAE6FD), CircleShape)
                             .bouncyClickable { restartGame() }
                             .testTag("battleship_restart_button"),
                         contentAlignment = Alignment.Center
@@ -857,7 +866,7 @@ fun BattleshipGameView(
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Restart",
-                            tint = Color.White
+                            tint = if (isDark) Color.White else Color(0xFF0F172A)
                         )
                     }
                 }
@@ -967,13 +976,13 @@ fun BattleshipGameView(
             AlertDialog(
                 onDismissRequest = {},
                 shape = RoundedCornerShape(24.dp),
-                containerColor = Color(0xFF0F172A),
+                containerColor = if (isDark) Color(0xFF0F172A) else Color(0xFFFFFFFF),
                 title = {
                     Text(
                         text = titleText,
                         style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Black),
                         textAlign = TextAlign.Center,
-                        color = Color.White,
+                        color = if (isDark) Color.White else Color(0xFF0F172A),
                         modifier = Modifier.fillMaxWidth()
                     )
                 },
@@ -987,28 +996,29 @@ fun BattleshipGameView(
                             text = "All enemy naval vessels have been destroyed and sunk!",
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
-                            color = Color(0xFF94A3B8)
+                            color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
                         )
 
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(Color(0xFF1E293B))
+                                .background(if (isDark) Color(0xFF1E293B) else Color(0xFFF0F9FF))
+                                .border(1.dp, if (isDark) Color(0xFF334155) else Color(0xFFBAE6FD), RoundedCornerShape(14.dp))
                                 .padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceAround
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("P1 SHOTS", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
-                                Text("${p1Radar.totalShotsFired}", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black), color = Color.White)
-                                Text("Hits: ${p1Radar.totalHits}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF94A3B8))
-                                Text("Acc: ${p1Radar.accuracyPercentage}%", style = MaterialTheme.typography.labelSmall, color = Color(0xFF38BDF8))
+                                Text("P1 SHOTS", style = MaterialTheme.typography.labelSmall, color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold)
+                                Text("${p1Radar.totalShotsFired}", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black), color = if (isDark) Color.White else Color(0xFF0F172A))
+                                Text("Hits: ${p1Radar.totalHits}", style = MaterialTheme.typography.labelSmall, color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B))
+                                Text("Acc: ${p1Radar.accuracyPercentage}%", style = MaterialTheme.typography.labelSmall, color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7))
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 val p2Label = if (selectedMode == GameMode.SOLO) "BOT SHOTS" else "P2 SHOTS"
                                 Text(p2Label, style = MaterialTheme.typography.labelSmall, color = PlayfulPink, fontWeight = FontWeight.Bold)
-                                Text("${p2Radar.totalShotsFired}", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black), color = Color.White)
-                                Text("Hits: ${p2Radar.totalHits}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF94A3B8))
+                                Text("${p2Radar.totalShotsFired}", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black), color = if (isDark) Color.White else Color(0xFF0F172A))
+                                Text("Hits: ${p2Radar.totalHits}", style = MaterialTheme.typography.labelSmall, color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B))
                                 Text("Acc: ${p2Radar.accuracyPercentage}%", style = MaterialTheme.typography.labelSmall, color = PlayfulPink)
                             }
                         }
@@ -1032,7 +1042,7 @@ fun BattleshipGameView(
                         onClick = onChangeMode,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Change Mode", fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                        Text("Change Mode", fontWeight = FontWeight.Bold, color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B))
                     }
                 }
             )
@@ -1043,24 +1053,25 @@ fun BattleshipGameView(
             AlertDialog(
                 onDismissRequest = { showHelpDialog = false },
                 shape = RoundedCornerShape(22.dp),
-                containerColor = Color(0xFF0F172A),
-                title = { Text("Battleship Rules 📜", fontWeight = FontWeight.Black, color = Color.White) },
+                containerColor = if (isDark) Color(0xFF0F172A) else Color(0xFFFFFFFF),
+                title = { Text("Battleship Rules 📜", fontWeight = FontWeight.Black, color = if (isDark) Color.White else Color(0xFF0F172A)) },
                 text = {
                     Column(
                         modifier = Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("• 10×10 Grid: Deploy your 5 naval vessels (Carrier 5, Battleship 4, Cruiser 3, Submarine 3, Destroyer 2).", color = Color(0xFFE2E8F0), fontSize = 13.sp)
-                        Text("• Manual Fleet Editing: Tap any placed ship to select, rotate in place, or remove and reposition.", color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        val bodyColor = if (isDark) Color(0xFFE2E8F0) else Color(0xFF334155)
+                        Text("• 10×10 Grid: Deploy your 5 naval vessels (Carrier 5, Battleship 4, Cruiser 3, Submarine 3, Destroyer 2).", color = bodyColor, fontSize = 13.sp)
+                        Text("• Manual Fleet Editing: Tap any placed ship to select, rotate in place, or remove and reposition.", color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         Text("• Extra-Shot Rule: Every valid HIT or SUNK grants another shot immediately!", color = PlayfulGreen, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text("• Turn Switch: A MISS passes the turn to your opponent.", color = Color(0xFFE2E8F0), fontSize = 13.sp)
-                        Text("• Attack Animations: Realistic crosshairs, artillery shells, fireball explosions, and water splashes.", color = Color(0xFFE2E8F0), fontSize = 13.sp)
-                        Text("• Victory: Sink all 5 enemy vessels (17 total hits) to rule the seas!", color = Color(0xFFFBBF24), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("• Turn Switch: A MISS passes the turn to your opponent.", color = bodyColor, fontSize = 13.sp)
+                        Text("• Attack Animations: Realistic crosshairs, artillery shells, fireball explosions, and water splashes.", color = bodyColor, fontSize = 13.sp)
+                        Text("• Victory: Sink all 5 enemy vessels (17 total hits) to rule the seas!", color = Color(0xFFD97706), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { showHelpDialog = false }) {
-                        Text("Got It!", fontWeight = FontWeight.Black, color = Color(0xFF38BDF8))
+                        Text("Got It!", fontWeight = FontWeight.Black, color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7))
                     }
                 }
             )
@@ -1095,7 +1106,7 @@ private fun FleetDeploymentView(
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Deployment Header
+        val isDark = ChillTheme.colors.isDark
         val playerLabel = when (deployingPlayer) {
             BattleshipPlayer.PLAYER_1 -> "PLAYER 1"
             BattleshipPlayer.PLAYER_2 -> "PLAYER 2"
@@ -1103,12 +1114,12 @@ private fun FleetDeploymentView(
         Text(
             text = "$playerLabel FLEET DEPLOYMENT",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black, letterSpacing = 0.5.sp),
-            color = Color(0xFF38BDF8)
+            color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
         )
         Text(
             text = "Position all 5 vessels on the 10×10 grid ($progress deployed)",
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFF94A3B8)
+            color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
         )
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -1138,8 +1149,13 @@ private fun FleetDeploymentView(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFF0F2B48).copy(alpha = 0.45f))
-                            .border(0.5.dp, Color(0xFF1E3A5F).copy(alpha = 0.4f))
+                            .background(
+                                if (isDark) Color(0xFF0F2B48).copy(alpha = 0.45f) else Color(0xFFE0F2FE)
+                            )
+                            .border(
+                                0.5.dp,
+                                if (isDark) Color(0xFF1E3A5F).copy(alpha = 0.4f) else Color(0xFFBAE6FD)
+                            )
                     )
                 }
             }
@@ -1153,8 +1169,8 @@ private fun FleetDeploymentView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF0F172A))
-                    .border(1.5.dp, Color(0xFF38BDF8), RoundedCornerShape(12.dp))
+                    .background(if (isDark) Color(0xFF0F172A) else Color(0xFFFFFFFF))
+                    .border(1.5.dp, if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7), RoundedCornerShape(12.dp))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -1169,7 +1185,7 @@ private fun FleetDeploymentView(
                             text = "SELECTED: ${selectedShip.title.uppercase()}",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF38BDF8),
+                            color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1180,7 +1196,7 @@ private fun FleetDeploymentView(
                                 "Ready to deploy • ${selectedShip.length} cells"
                             },
                             fontSize = 11.sp,
-                            color = Color(0xFF94A3B8),
+                            color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1190,15 +1206,15 @@ private fun FleetDeploymentView(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF1E293B))
-                            .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                            .background(if (isDark) Color(0xFF1E293B) else Color(0xFFF0F9FF))
+                            .border(1.dp, if (isDark) Color(0xFF38BDF8).copy(alpha = 0.4f) else Color(0xFFBAE6FD), RoundedCornerShape(6.dp))
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
                             text = if (orientation == ShipOrientation.HORIZONTAL) "HORIZ ➡️" else "VERT ⬇️",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = if (isDark) Color.White else Color(0xFF0284C7)
                         )
                     }
                 }
@@ -1290,11 +1306,11 @@ private fun FleetDeploymentView(
                         .clip(RoundedCornerShape(10.dp))
                         .background(
                             if (isSelected) Color(0xFF0284C7).copy(alpha = 0.25f)
-                            else Color(0xFF0F172A)
+                            else if (isDark) Color(0xFF0F172A) else Color(0xFFFFFFFF)
                         )
                         .border(
                             width = if (isSelected) 2.dp else 1.dp,
-                            color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF1E293B),
+                            color = if (isSelected) Color(0xFF0284C7) else if (isDark) Color(0xFF1E293B) else Color(0xFFDCE3EC),
                             shape = RoundedCornerShape(10.dp)
                         )
                         .clickable { onSelectShip(ship) }
@@ -1327,12 +1343,12 @@ private fun FleetDeploymentView(
                                 text = ship.title,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp,
-                                color = Color.White
+                                color = if (isDark) Color.White else Color(0xFF0F172A)
                             )
                             Text(
                                 text = "${ship.length} cells",
                                 fontSize = 10.sp,
-                                color = Color(0xFF94A3B8)
+                                color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
                             )
                         }
                     }
@@ -1362,7 +1378,7 @@ private fun FleetDeploymentView(
                             text = if (isSelected) "SELECTED" else "SELECT",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF64748B)
+                            color = if (isSelected) (if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)) else (if (isDark) Color(0xFF64748B) else Color(0xFF94A3B8))
                         )
                     }
                 }
@@ -1376,13 +1392,14 @@ private fun FleetDeploymentView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF1E293B))
+                    .background(if (isDark) Color(0xFF1E293B) else Color(0xFFFFFFFF))
+                    .border(1.dp, if (isDark) Color(0xFF334155) else Color(0xFFBAE6FD), RoundedCornerShape(14.dp))
                     .padding(12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "Fleet Deployed! Waiting for opponent... ⏳",
-                    color = Color.White,
+                    color = if (isDark) Color.White else Color(0xFF0F172A),
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
@@ -1398,17 +1415,18 @@ private fun FleetDeploymentView(
                             .weight(0.35f)
                             .height(50.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF334155))
+                            .background(if (isDark) Color(0xFF334155) else Color(0xFFE2E8F0))
                             .bouncyClickable(onClick = onClearAll),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("CLEAR ALL", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color.White)
+                        Text("CLEAR ALL", fontSize = 11.sp, fontWeight = FontWeight.Black, color = if (isDark) Color.White else Color(0xFF334155))
                     }
                 }
 
                 ChunkyButton(
                     text = if (fleetState.isDeploymentComplete) "START BATTLE 🚀" else "DEPLOY ALL ($progress)",
-                    backgroundColor = if (fleetState.isDeploymentComplete) Color(0xFF0284C7) else Color(0xFF334155),
+                    backgroundColor = if (fleetState.isDeploymentComplete) Color(0xFF0284C7) else (if (isDark) Color(0xFF334155) else Color(0xFFCBD5E1)),
+                    contentColor = if (fleetState.isDeploymentComplete) Color.White else (if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)),
                     enabled = fleetState.isDeploymentComplete,
                     onClick = onConfirm,
                     modifier = Modifier.weight(1f),
@@ -1449,6 +1467,7 @@ private fun BattleArenaView(
     val isMyTurn = (selectedMode == GameMode.SOLO && activePlayer == BattleshipPlayer.PLAYER_1) ||
         (selectedMode == GameMode.LOCAL_1V1 && activePlayer == viewingPlayer) ||
         (selectedMode == GameMode.BLUETOOTH_1V1 && activePlayer == localPlayer)
+    val isDark = ChillTheme.colors.isDark
 
     Column(
         modifier = Modifier
@@ -1460,12 +1479,21 @@ private fun BattleArenaView(
         if (activeAttack != null) {
             AttackerIdentificationBanner(activeAttack = activeAttack)
         } else if (isBotThinking) {
+            val thinkingBg = if (isDark) {
+                Brush.horizontalGradient(listOf(Color(0xFF7F1D1D), Color(0xFF991B1B), Color(0xFF450A0A)))
+            } else {
+                Brush.horizontalGradient(listOf(Color(0xFFFEE2E2), Color(0xFFFFEDD5), Color(0xFFFEE2E2)))
+            }
+            val thinkingBorder = if (isDark) Color(0xFFEF4444) else Color(0xFFF87171)
+            val thinkingTitleColor = if (isDark) Color.White else Color(0xFF991B1B)
+            val thinkingSubColor = if (isDark) Color(0xFFFDE047) else Color(0xFFB45309)
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Brush.horizontalGradient(listOf(Color(0xFF7F1D1D), Color(0xFF991B1B), Color(0xFF450A0A))))
-                    .border(2.dp, Color(0xFFEF4444), RoundedCornerShape(14.dp))
+                    .background(thinkingBg)
+                    .border(2.dp, thinkingBorder, RoundedCornerShape(14.dp))
                     .padding(horizontal = 14.dp, vertical = 10.dp)
                     .testTag("bot_thinking_banner")
             ) {
@@ -1481,13 +1509,13 @@ private fun BattleArenaView(
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 1.sp
                             ),
-                            color = Color.White
+                            color = thinkingTitleColor
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "Calculating naval strike coordinates...",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                            color = Color(0xFFFDE047)
+                            color = thinkingSubColor
                         )
                     }
                     Box(
@@ -1508,14 +1536,30 @@ private fun BattleArenaView(
                 }
             }
         } else {
+            val turnBg = if (isDark) {
+                if (isMyTurn) Color(0xFF0284C7).copy(alpha = 0.25f) else Color(0xFF0F172A)
+            } else {
+                if (isMyTurn) Color(0xFFE0F2FE) else Color(0xFFFFFFFF)
+            }
+            val turnBorder = if (isDark) {
+                if (isMyTurn) Color(0xFF38BDF8) else Color(0xFF1E293B)
+            } else {
+                if (isMyTurn) Color(0xFF0284C7) else Color(0xFFDCE3EC)
+            }
+            val turnTitleColor = if (isDark) {
+                if (isMyTurn) Color(0xFF38BDF8) else Color(0xFF94A3B8)
+            } else {
+                if (isMyTurn) Color(0xFF0284C7) else Color(0xFF64748B)
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(if (isMyTurn) Color(0xFF0284C7).copy(alpha = 0.25f) else Color(0xFF0F172A))
+                    .background(turnBg)
                     .border(
                         width = 1.5.dp,
-                        color = if (isMyTurn) Color(0xFF38BDF8) else Color(0xFF1E293B),
+                        color = turnBorder,
                         shape = RoundedCornerShape(14.dp)
                     )
                     .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -1533,14 +1577,14 @@ private fun BattleArenaView(
                         Text(
                             text = turnTitle,
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Black),
-                            color = if (isMyTurn) Color(0xFF38BDF8) else Color(0xFF94A3B8)
+                            color = turnTitleColor
                         )
                         if (latestAnnouncement.isNotBlank()) {
                             Text(
                                 text = latestAnnouncement,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = if (isDark) Color.White else Color(0xFF172033)
                             )
                         }
                     }
@@ -1551,13 +1595,13 @@ private fun BattleArenaView(
                             text = "FLEET AFLOAT",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF94A3B8)
+                            color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
                         )
                         Text(
                             text = "${myFleet.remainingShipsCount}/5",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Black,
-                            color = PlayfulGreen
+                            color = if (isDark) PlayfulGreen else Color(0xFF16A34A)
                         )
                     }
                 }
@@ -1571,7 +1615,7 @@ private fun BattleArenaView(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF0F172A))
+                .background(if (isDark) Color(0xFF0F172A) else Color(0xFFE2E8F0))
                 .padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -1579,7 +1623,7 @@ private fun BattleArenaView(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (activeTab == 0) Color(0xFF0284C7) else Color.Transparent)
+                    .background(if (activeTab == 0) Color(0xFF0284C7) else (if (isDark) Color.Transparent else Color(0xFFF1F5F9)))
                     .bouncyClickable(enabled = !isAttackAnimating && !isBotThinking) { onTabChanged(0) }
                     .padding(vertical = 7.dp)
                     .testTag("radar_tab_button"),
@@ -1589,7 +1633,7 @@ private fun BattleArenaView(
                     text = "🎯 RADAR (ATTACK)",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color.White
+                    color = if (activeTab == 0) Color.White else (if (isDark) Color(0xFF94A3B8) else Color(0xFF475569))
                 )
             }
 
@@ -1597,7 +1641,7 @@ private fun BattleArenaView(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (activeTab == 1) Color(0xFF0284C7) else Color.Transparent)
+                    .background(if (activeTab == 1) Color(0xFF0284C7) else (if (isDark) Color.Transparent else Color(0xFFF1F5F9)))
                     .bouncyClickable(enabled = !isAttackAnimating && !isBotThinking) { onTabChanged(1) }
                     .padding(vertical = 7.dp)
                     .testTag("fleet_tab_button"),
@@ -1607,7 +1651,7 @@ private fun BattleArenaView(
                     text = "🛡️ MY FLEET (${myFleet.remainingShipsCount}/5)",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color.White
+                    color = if (activeTab == 1) Color.White else (if (isDark) Color(0xFF94A3B8) else Color(0xFF475569))
                 )
             }
         }
@@ -1654,8 +1698,8 @@ private fun BattleArenaView(
                             // Fiery breach on hit
                             Box(
                                 modifier = cellModifier
-                                    .background(Color(0xFFEF4444).copy(alpha = 0.35f))
-                                    .border(0.5.dp, Color(0xFFF87171)),
+                                    .background(if (isDark) Color(0xFFEF4444).copy(alpha = 0.35f) else Color(0xFFFEE2E2))
+                                    .border(0.5.dp, if (isDark) Color(0xFFF87171) else Color(0xFFEF4444)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text("🔥", fontSize = 11.sp)
@@ -1664,8 +1708,8 @@ private fun BattleArenaView(
                             // Water splash on miss
                             Box(
                                 modifier = cellModifier
-                                    .background(Color(0xFF0284C7).copy(alpha = 0.25f))
-                                    .border(0.5.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                                    .background(if (isDark) Color(0xFF0284C7).copy(alpha = 0.25f) else Color(0xFFE0F2FE))
+                                    .border(0.5.dp, if (isDark) Color(0xFF38BDF8).copy(alpha = 0.4f) else Color(0xFFBAE6FD)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text("🌊", fontSize = 9.sp)
@@ -1673,10 +1717,20 @@ private fun BattleArenaView(
                         }
                     } else {
                         // Untried ocean water cell
+                        val untriedBg = if (isDark) {
+                            if (isTargeted) Color(0xFF0284C7).copy(alpha = 0.4f) else Color(0xFF0F2B48).copy(alpha = 0.65f)
+                        } else {
+                            if (isTargeted) Color(0xFFBAE6FD) else Color(0xFFF0F9FF)
+                        }
+                        val untriedBorder = if (isDark) {
+                            if (isTargeted) Color(0xFF38BDF8) else Color(0xFF1E3A5F).copy(alpha = 0.5f)
+                        } else {
+                            if (isTargeted) Color(0xFF0284C7) else Color(0xFFBAE6FD).copy(alpha = 0.7f)
+                        }
                         Box(
                             modifier = cellModifier
-                                .background(if (isTargeted) Color(0xFF0284C7).copy(alpha = 0.4f) else Color(0xFF0F2B48).copy(alpha = 0.65f))
-                                .border(0.5.dp, if (isTargeted) Color(0xFF38BDF8) else Color(0xFF1E3A5F).copy(alpha = 0.5f))
+                                .background(untriedBg)
+                                .border(0.5.dp, untriedBorder)
                         )
                     }
                 }
@@ -1689,14 +1743,15 @@ private fun BattleArenaView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF0F172A))
+                    .background(if (isDark) Color(0xFF0F172A) else Color.White)
+                    .border(1.dp, if (isDark) Color(0xFF1E293B) else Color(0xFFDCE3EC), RoundedCornerShape(10.dp))
                     .padding(8.dp),
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
-                Text("Shots: ${radar.totalShotsFired}", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                Text("Hits: ${radar.totalHits}", fontSize = 11.sp, color = Color(0xFFF87171), fontWeight = FontWeight.Bold)
-                Text("Misses: ${radar.totalMisses}", fontSize = 11.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
-                Text("Sunk: ${radar.sunkEnemyShips.size}/5", fontSize = 11.sp, color = PlayfulGreen, fontWeight = FontWeight.Bold)
+                Text("Shots: ${radar.totalShotsFired}", fontSize = 11.sp, color = if (isDark) Color.White else Color(0xFF172033), fontWeight = FontWeight.Bold)
+                Text("Hits: ${radar.totalHits}", fontSize = 11.sp, color = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626), fontWeight = FontWeight.Bold)
+                Text("Misses: ${radar.totalMisses}", fontSize = 11.sp, color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold)
+                Text("Sunk: ${radar.sunkEnemyShips.size}/5", fontSize = 11.sp, color = if (isDark) PlayfulGreen else Color(0xFF16A34A), fontWeight = FontWeight.Bold)
             }
         } else {
             // My Fleet Board (Defense)
@@ -1747,16 +1802,26 @@ private fun BattleArenaView(
                     } else if (isFiredAt) {
                         Box(
                             modifier = cellModifier
-                                .background(Color(0xFF0284C7).copy(alpha = 0.25f)),
+                                .background(if (isDark) Color(0xFF0284C7).copy(alpha = 0.25f) else Color(0xFFE0F2FE)),
                             contentAlignment = Alignment.Center
                         ) {
                             Text("🌊", fontSize = 9.sp)
                         }
                     } else {
+                        val emptyFleetBg = if (isDark) {
+                            if (isTargeted) Color(0xFFEF4444).copy(alpha = 0.3f) else Color(0xFF0F2B48).copy(alpha = 0.5f)
+                        } else {
+                            if (isTargeted) Color(0xFFFEE2E2) else Color(0xFFF0F9FF)
+                        }
+                        val emptyFleetBorder = if (isDark) {
+                            if (isTargeted) Color(0xFFEF4444) else Color(0xFF1E3A5F).copy(alpha = 0.4f)
+                        } else {
+                            if (isTargeted) Color(0xFFEF4444) else Color(0xFFBAE6FD).copy(alpha = 0.7f)
+                        }
                         Box(
                             modifier = cellModifier
-                                .background(if (isTargeted) Color(0xFFEF4444).copy(alpha = 0.3f) else Color(0xFF0F2B48).copy(alpha = 0.5f))
-                                .border(0.5.dp, if (isTargeted) Color(0xFFEF4444) else Color(0xFF1E3A5F).copy(alpha = 0.4f))
+                                .background(emptyFleetBg)
+                                .border(0.5.dp, emptyFleetBorder)
                         )
                     }
                 }
@@ -1775,7 +1840,8 @@ private fun BattleArenaView(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF0F172A))
+                            .background(if (isDark) Color(0xFF0F172A) else Color.White)
+                            .border(1.dp, if (isDark) Color(0xFF1E293B) else Color(0xFFDCE3EC), RoundedCornerShape(8.dp))
                             .padding(horizontal = 10.dp, vertical = 5.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -1793,7 +1859,7 @@ private fun BattleArenaView(
                                 text = placement.shipType.title,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isSunk) Color(0xFFEF4444) else Color.White
+                                color = if (isSunk) Color(0xFFEF4444) else (if (isDark) Color.White else Color(0xFF172033))
                             )
                         }
 
@@ -1801,7 +1867,7 @@ private fun BattleArenaView(
                             text = if (isSunk) "DESTROYED 💥" else "HEALTH: $remainingHealth/${placement.shipType.length}",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Black,
-                            color = if (isSunk) Color(0xFFEF4444) else PlayfulGreen
+                            color = if (isSunk) Color(0xFFEF4444) else (if (isDark) PlayfulGreen else Color(0xFF16A34A))
                         )
                     }
                 }
@@ -1824,12 +1890,13 @@ private fun OceanBattleshipGrid(
     overlayContent: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null,
     cellContent: @Composable (Int, Int) -> Unit
 ) {
+    val isDark = ChillTheme.colors.isDark
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF07192C))
-            .border(1.5.dp, Color(0xFF1E3A5F), RoundedCornerShape(14.dp))
+            .background(if (isDark) Color(0xFF07192C) else Color(0xFFFFFFFF))
+            .border(1.5.dp, if (isDark) Color(0xFF1E3A5F) else Color(0xFFBAE6FD), RoundedCornerShape(14.dp))
             .padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1850,7 +1917,7 @@ private fun OceanBattleshipGrid(
                             text = letter,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF38BDF8)
+                            color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
                         )
                     }
                 }
@@ -1882,7 +1949,7 @@ private fun OceanBattleshipGrid(
                                 text = "${r + 1}",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Black,
-                                color = Color(0xFF38BDF8)
+                                color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
                             )
                         }
 
@@ -1921,13 +1988,14 @@ private fun PrivacyHandoverOverlay(
     isDeployment: Boolean,
     onReady: () -> Unit
 ) {
+    val isDark = ChillTheme.colors.isDark
     val playerName = if (targetPlayer == BattleshipPlayer.PLAYER_1) "PLAYER 1" else "PLAYER 2"
     val accent = if (targetPlayer == BattleshipPlayer.PLAYER_1) Color(0xFF0284C7) else PlayfulPink
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF050B14))
+            .background(if (isDark) Color(0xFF050B14) else Color(0xFFF5F7FB))
             .clickable(enabled = false) {}
             .testTag("privacy_handover_overlay"),
         contentAlignment = Alignment.Center
@@ -1942,7 +2010,7 @@ private fun PrivacyHandoverOverlay(
             Text(
                 text = "PASS DEVICE TO $playerName",
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
-                color = Color.White,
+                color = if (isDark) Color.White else Color(0xFF172033),
                 textAlign = TextAlign.Center
             )
 
@@ -1953,7 +2021,7 @@ private fun PrivacyHandoverOverlay(
                     "Shot missed! Turn passes. Hand the phone over so $playerName can take command without seeing your coordinates."
                 },
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF94A3B8),
+                color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B),
                 textAlign = TextAlign.Center
             )
 

@@ -48,7 +48,8 @@ fun ChillGamesTheme(
             surfaceVariant = themeColors.surfaceVariant,
             onSurfaceVariant = themeColors.secondaryText,
             outline = themeColors.border,
-            outlineVariant = themeColors.borderLight
+            outlineVariant = themeColors.borderLight,
+            error = themeColors.error
         )
         else -> lightColorScheme(
             primary = themeColors.accent,
@@ -66,7 +67,8 @@ fun ChillGamesTheme(
             surfaceVariant = themeColors.surfaceVariant,
             onSurfaceVariant = themeColors.secondaryText,
             outline = themeColors.border,
-            outlineVariant = themeColors.borderLight
+            outlineVariant = themeColors.borderLight,
+            error = themeColors.error
         )
     }
 
