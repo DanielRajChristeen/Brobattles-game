@@ -96,6 +96,23 @@ class BattleshipEngine {
             }
             return placements
         }
+
+        /**
+         * Validates that a submitted fleet has exactly 5 unique ships with no boundary violations or overlaps.
+         */
+        fun validateSubmittedFleet(placements: List<ShipPlacement>): Boolean {
+            if (placements.size != ShipType.ALL_SHIPS.size) return false
+            val types = placements.map { it.shipType }.toSet()
+            if (types.size != ShipType.ALL_SHIPS.size) return false
+            val cumulative = mutableListOf<ShipPlacement>()
+            for (p in placements) {
+                if (!isValidPlacement(p.shipType, p.start.row, p.start.col, p.orientation, cumulative)) {
+                    return false
+                }
+                cumulative.add(p)
+            }
+            return true
+        }
     }
 
     /**
@@ -277,7 +294,7 @@ class BattleshipEngine {
 
         val announcement = when {
             allSunk -> "Victory! All enemy vessels have been destroyed!"
-            isSunk && targetShip != null -> "Direct hit! ${targetShip.shipType.title} SUNK! Take another shot!"
+            isSunk && targetShip != null -> "Direct hit! SHIP SUNK! Take another shot!"
             isHit -> "Direct hit! Extra shot awarded!"
             else -> "Splash! Shot missed. Turn passes to opponent."
         }
@@ -311,7 +328,13 @@ class BattleshipEngine {
      * Applies a remote shot result into our local state in WiFi Play mode.
      * When remote fires at us, or when we receive the authoritative result from the host.
      */
-    fun applyRemoteIncomingShot(firingPlayer: BattleshipPlayer, coord: CellCoordinate, isHit: Boolean, sunkType: ShipType?): ShotOutcome {
+    fun applyRemoteIncomingShot(
+        firingPlayer: BattleshipPlayer,
+        coord: CellCoordinate,
+        isHit: Boolean,
+        isSunk: Boolean,
+        sunkType: ShipType? = null
+    ): ShotOutcome {
         val enemyPlayer = firingPlayer.opponent()
         val radar = state.radarFor(firingPlayer)
         val enemyFleet = state.fleetFor(enemyPlayer)
@@ -319,12 +342,12 @@ class BattleshipEngine {
         val updatedIncoming = enemyFleet.incomingShots + (coord to isHit)
         val updatedEnemyFleet = enemyFleet.copy(incomingShots = updatedIncoming)
 
-        val isSunk = sunkType != null
         val updatedSunk = if (isSunk && sunkType != null && !radar.sunkEnemyShips.contains(sunkType)) {
             radar.sunkEnemyShips + sunkType
         } else {
             radar.sunkEnemyShips
         }
+        val newGenericSunk = if (isSunk) radar.genericSunkCount + 1 else radar.genericSunkCount
 
         val outcome = if (isHit) {
             ShotOutcome.Hit(
@@ -340,6 +363,7 @@ class BattleshipEngine {
         val updatedRadar = radar.copy(
             shots = radar.shots + (coord to isHit),
             sunkEnemyShips = updatedSunk,
+            genericSunkCount = newGenericSunk,
             lastShotOutcome = outcome
         )
 
@@ -348,6 +372,13 @@ class BattleshipEngine {
         val winner = if (allSunk) firingPlayer else null
         val nextActive = if (allSunk) firingPlayer else if (isHit) firingPlayer else enemyPlayer
 
+        val announcement = when {
+            allSunk -> "Victory! All enemy vessels have been destroyed!"
+            isSunk -> "Direct hit! SHIP SUNK! Take another shot!"
+            isHit -> "Direct hit! Extra shot awarded!"
+            else -> "Splash! Shot missed. Turn passes to opponent."
+        }
+
         state = if (firingPlayer == BattleshipPlayer.PLAYER_1) {
             state.copy(
                 p1Radar = updatedRadar,
@@ -355,7 +386,8 @@ class BattleshipEngine {
                 phase = newPhase,
                 activePlayer = nextActive,
                 winner = winner,
-                turnNumber = state.turnNumber + 1
+                turnNumber = state.turnNumber + 1,
+                latestAnnouncement = announcement
             )
         } else {
             state.copy(
@@ -364,7 +396,8 @@ class BattleshipEngine {
                 phase = newPhase,
                 activePlayer = nextActive,
                 winner = winner,
-                turnNumber = state.turnNumber + 1
+                turnNumber = state.turnNumber + 1,
+                latestAnnouncement = announcement
             )
         }
 

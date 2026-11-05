@@ -151,6 +151,7 @@ data class PlayerFleetState(
 data class TargetingRadar(
     val shots: Map<CellCoordinate, Boolean> = emptyMap(), // true = HIT, false = MISS
     val sunkEnemyShips: List<ShipType> = emptyList(),
+    val genericSunkCount: Int = 0,
     val lastShotOutcome: ShotOutcome? = null
 ) {
     val totalShotsFired: Int
@@ -161,6 +162,9 @@ data class TargetingRadar(
 
     val totalMisses: Int
         get() = shots.count { !it.value }
+
+    val totalSunkCount: Int
+        get() = maxOf(sunkEnemyShips.size, genericSunkCount)
 
     val accuracyPercentage: Int
         get() = if (totalShotsFired == 0) 0 else ((totalHits * 100) / totalShotsFired)

@@ -77,6 +77,7 @@ import com.example.core.engine.battleship.ShipPlacement
 import com.example.core.engine.battleship.ShipType
 import com.example.core.engine.battleship.ShotOutcome
 import com.example.core.engine.battleship.TargetingRadar
+import com.example.core.engine.battleship.BattleshipNetworkProtocol
 import com.example.core.multiplayer.MultiplayerLobbyState
 import com.example.core.registry.GameMode
 import com.example.ui.MainViewModel
@@ -142,6 +143,13 @@ fun BattleshipGameView(
     var hasPlayedOutcomeAudio by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
     var remotePlayerReady by remember { mutableStateOf(false) }
+    var localPlayerDeployed by remember { mutableStateOf(false) }
+    var pendingClientFleet by remember { mutableStateOf<List<ShipPlacement>?>(null) }
+    var rematchRequestedByLocal by remember { mutableStateOf(false) }
+    var rematchRequestedByRemote by remember { mutableStateOf(false) }
+    var showDisconnectDialog by remember { mutableStateOf(false) }
+    var disconnectMessage by remember { mutableStateOf("") }
+    val processedAttackIds = remember { mutableSetOf<String>() }
     var sessionKey by remember { mutableIntStateOf(0) }
 
     // Multi-stage attack animation state & exact screen coordinate mapping
@@ -241,6 +249,11 @@ fun BattleshipGameView(
         matchRecorded = false
         hasPlayedOutcomeAudio = false
         remotePlayerReady = false
+        localPlayerDeployed = false
+        pendingClientFleet = null
+        rematchRequestedByLocal = false
+        rematchRequestedByRemote = false
+        processedAttackIds.clear()
         activeAttack = null
         isAttackAnimating = false
         soundManager.stopAllSounds()
@@ -359,12 +372,22 @@ fun BattleshipGameView(
                 }
             }
             GameMode.BLUETOOTH_1V1 -> {
-                multiplayerManager.sendAction("BATTLESHIP_READY", "")
-                if (remotePlayerReady) {
-                    engine.setPhase(BattleshipPhase.BATTLE)
-                    gameState = engine.state
-                    soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
+                localPlayerDeployed = true
+                if (isHost) {
+                    val clientFleet = pendingClientFleet
+                    if (clientFleet != null) {
+                        engine.setFleet(BattleshipPlayer.PLAYER_2, clientFleet)
+                        engine.setPhase(BattleshipPhase.BATTLE)
+                        gameState = engine.state
+                        multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_BATTLE_START, "")
+                        soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
+                    } else {
+                        engine.setPhase(BattleshipPhase.WAITING_FOR_REMOTE_DEPLOYMENT)
+                        gameState = engine.state
+                    }
                 } else {
+                    val serialized = BattleshipNetworkProtocol.serializeFleet(fleet.placements)
+                    multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_FLEET_SUBMITTED, serialized)
                     engine.setPhase(BattleshipPhase.WAITING_FOR_REMOTE_DEPLOYMENT)
                     gameState = engine.state
                 }
@@ -375,25 +398,177 @@ fun BattleshipGameView(
     // ==========================================
     // Multi-Stage Animated Combat Firing
     // ==========================================
+    fun runSynchronizedAttackAnimation(
+        attacker: BattleshipPlayer,
+        coord: CellCoordinate,
+        isHit: Boolean,
+        isSunk: Boolean,
+        isGameOver: Boolean,
+        winner: BattleshipPlayer?,
+        nextTurn: BattleshipPlayer,
+        onComplete: () -> Unit
+    ) {
+        scope.launch {
+            try {
+                isAttackAnimating = true
+                val isAttacker = (attacker == localPlayer)
+
+                // Attacker views Radar (Attack); Defender views My Fleet (Defense)
+                activeBoardTab = if (isAttacker) 0 else 1
+
+                // Ensure layout coordinates of target cell are resolved
+                var targetCenter = if (isAttacker) getRadarCellCenter(coord) else getFleetCellCenter(coord)
+                var retryCount = 0
+                while (targetCenter == Offset.Zero && retryCount < 10) {
+                    delay(20)
+                    targetCenter = if (isAttacker) getRadarCellCenter(coord) else getFleetCellCenter(coord)
+                    retryCount++
+                }
+                val cellSizePx = if (isAttacker) getRadarCellSize(coord) else getFleetCellSize(coord)
+
+                // Stage 1: Target Lock (1,000 ms)
+                activeAttack = AttackAnimationData(
+                    attacker = attacker,
+                    isBotAttacker = false,
+                    targetCoord = coord,
+                    targetBoard = if (isAttacker) BoardType.RADAR else BoardType.MY_FLEET,
+                    targetCenterInOverlay = targetCenter,
+                    cellSizePx = cellSizePx,
+                    isHit = isHit,
+                    isSunk = isSunk,
+                    stage = AttackAnimationStage.TARGET_LOCK,
+                    bannerTitle = if (isAttacker) "⚔️ YOUR ATTACK" else "⚔️ OPPONENT ATTACKING YOU",
+                    bannerSubtitle = if (isAttacker) "Targeting enemy fleet..." else "Incoming naval strike...",
+                    resultText = "",
+                    announcement = if (isAttacker) "Target lock acquired at ${coord.label}" else "Warning! Strike locked at ${coord.label}"
+                )
+                soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
+                delay(AttackTimingConfig.TARGET_LOCK_MS)
+
+                // Stage 2: Bomb Flight / Free Fall (1,000 ms)
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.PROJECTILE_FLIGHT,
+                    bannerSubtitle = if (isAttacker) "Bomb dropping on enemy fleet..." else "Bomb dropping on your fleet..."
+                )
+                soundManager.playLaunch(settings.soundEnabled)
+                delay(AttackTimingConfig.PROJECTILE_FLIGHT_MS)
+
+                // Stage 3: Impact (Explosion or Splash) (1,200 ms)
+                val impactResultText = when {
+                    isSunk -> "ENEMY SHIP SUNK! 💥"
+                    isHit -> "DIRECT HIT! 🎯"
+                    else -> "SHOT MISSED! 🌊"
+                }
+
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.IMPACT,
+                    bannerSubtitle = impactResultText,
+                    resultText = impactResultText
+                )
+
+                if (isHit) {
+                    if (isSunk) {
+                        soundManager.playShipSunk(settings.soundEnabled, settings.vibrationEnabled)
+                    } else {
+                        soundManager.playHit(settings.soundEnabled, settings.vibrationEnabled)
+                    }
+                } else {
+                    soundManager.playMiss(settings.soundEnabled, settings.vibrationEnabled)
+                }
+                delay(AttackTimingConfig.IMPACT_MS)
+
+                // Stage 4: Result Announcement (1,500 ms)
+                val announcementText = when {
+                    isGameOver -> if (winner == localPlayer) "VICTORY! ALL ENEMY VESSELS SUNK!" else "DEFEAT! ALL FLEET VESSELS SUNK!"
+                    isSunk -> "DIRECT HIT! SHIP SUNK! TAKE ANOTHER SHOT!"
+                    isHit -> "DIRECT HIT! EXTRA SHOT AWARDED!"
+                    else -> "SPLASH! SHOT MISSED."
+                }
+
+                activeAttack = activeAttack?.copy(
+                    stage = AttackAnimationStage.RESULT_ANNOUNCEMENT,
+                    bannerSubtitle = announcementText,
+                    announcement = announcementText
+                )
+                delay(AttackTimingConfig.RESULT_ANNOUNCEMENT_MS)
+
+                // Stage 5: Turn Transition (500 ms)
+                delay(AttackTimingConfig.TURN_TRANSITION_MS)
+
+                onComplete()
+
+                // If turn switched to local player and game is not over, auto-switch to Radar tab
+                if (nextTurn == localPlayer && !isGameOver) {
+                    activeBoardTab = 0
+                }
+            } catch (_: Exception) {
+                onComplete()
+            } finally {
+                activeAttack = null
+                isAttackAnimating = false
+            }
+        }
+    }
+
     fun onTargetCellClick(coord: CellCoordinate) {
         if (gameState.phase != BattleshipPhase.BATTLE || isBotThinking || isAttackAnimating) return
         if (isHandoverVisible) return
 
-        if (isNearbyMode && gameState.activePlayer != localPlayer) return
-        if (selectedMode == GameMode.SOLO && gameState.activePlayer != BattleshipPlayer.PLAYER_1) return
-
-        val firingPlayer = gameState.activePlayer
-        val radar = gameState.radarFor(firingPlayer)
-        if (radar.hasFiredAt(coord)) return
-
         if (isNearbyMode) {
-            // In WiFi Play, trigger launch and send action
-            soundManager.playLaunch(settings.soundEnabled)
-            multiplayerManager.sendAction("BATTLESHIP_FIRE", "${coord.row},${coord.col}")
+            if (gameState.activePlayer != localPlayer) return
+            val radar = gameState.radarFor(localPlayer)
+            if (radar.hasFiredAt(coord)) return
+
+            if (isHost) {
+                val attackId = "atk_p1_${System.currentTimeMillis()}"
+                processedAttackIds.add(attackId)
+                val outcome = engine.fireShot(BattleshipPlayer.PLAYER_1, coord)
+                val isHit = (outcome is ShotOutcome.Hit)
+                val isSunk = (outcome as? ShotOutcome.Hit)?.isSunk ?: false
+                val nextTurn = engine.state.activePlayer
+                val isGameOver = engine.state.isGameOver
+                val winner = engine.state.winner
+
+                val event = BattleshipNetworkProtocol.AuthoritativeAttackEvent(
+                    attackId = attackId,
+                    attackerRole = "PLAYER_1",
+                    row = coord.row,
+                    col = coord.col,
+                    isHit = isHit,
+                    isSunk = isSunk,
+                    nextTurnRole = nextTurn.name,
+                    isGameOver = isGameOver,
+                    winnerRole = winner?.name
+                )
+                multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_ATTACK_EVENT, event.toJson())
+
+                runSynchronizedAttackAnimation(
+                    attacker = BattleshipPlayer.PLAYER_1,
+                    coord = coord,
+                    isHit = isHit,
+                    isSunk = isSunk,
+                    isGameOver = isGameOver,
+                    winner = winner,
+                    nextTurn = nextTurn
+                ) {
+                    gameState = engine.state
+                }
+            } else {
+                val attackId = "atk_p2_${System.currentTimeMillis()}"
+                val req = BattleshipNetworkProtocol.AttackRequest(
+                    attackId = attackId,
+                    row = coord.row,
+                    col = coord.col,
+                    senderRole = "PLAYER_2"
+                )
+                soundManager.playLaunch(settings.soundEnabled)
+                multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_ATTACK_REQUEST, req.toJson())
+            }
             return
         }
 
         // Solo & Local 1v1: Execute full visual multi-stage attack
+        val firingPlayer = gameState.activePlayer
         scope.launch {
             try {
                 activeBoardTab = 0 // Automatically display Radar (Attack) tab for human strike
@@ -475,7 +650,7 @@ fun BattleshipGameView(
                 // Stage 4: Result Announcement (1,500 ms)
                 val announcementText = when {
                     engine.state.isGameOver -> "VICTORY! ALL ENEMY VESSELS SUNK!"
-                    isSunk -> "DIRECT HIT! $sunkShip SUNK! TAKE ANOTHER SHOT!"
+                    isSunk -> "DIRECT HIT! SHIP SUNK! TAKE ANOTHER SHOT!"
                     isHit -> "DIRECT HIT! EXTRA SHOT AWARDED!"
                     else -> "SPLASH! SHOT MISSED."
                 }
@@ -639,85 +814,121 @@ fun BattleshipGameView(
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
-                    "BATTLESHIP_READY" -> {
-                        remotePlayerReady = true
-                        val myFleet = gameState.fleetFor(localPlayer)
-                        if (myFleet.isDeploymentComplete) {
+                    BattleshipNetworkProtocol.ACTION_FLEET_SUBMITTED -> {
+                        if (isHost) {
+                            val clientPlacements = BattleshipNetworkProtocol.deserializeFleet(action.payload)
+                            if (clientPlacements != null && BattleshipEngine.validateSubmittedFleet(clientPlacements)) {
+                                pendingClientFleet = clientPlacements
+                                remotePlayerReady = true
+                                if (localPlayerDeployed) {
+                                    engine.setFleet(BattleshipPlayer.PLAYER_2, clientPlacements)
+                                    engine.setPhase(BattleshipPhase.BATTLE)
+                                    gameState = engine.state
+                                    multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_BATTLE_START, "")
+                                    soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
+                                }
+                            }
+                        }
+                    }
+                    BattleshipNetworkProtocol.ACTION_BATTLE_START -> {
+                        if (!isHost) {
                             engine.setPhase(BattleshipPhase.BATTLE)
                             gameState = engine.state
                             soundManager.playSonarPing(settings.soundEnabled, settings.vibrationEnabled)
                         }
                     }
-                    "BATTLESHIP_FIRE" -> {
-                        val parts = action.payload.split(",")
-                        if (parts.size == 2) {
-                            val r = parts[0].toIntOrNull() ?: return@collect
-                            val c = parts[1].toIntOrNull() ?: return@collect
-                            val coord = CellCoordinate(r, c)
-                            val remotePlayer = localPlayer.opponent()
+                    BattleshipNetworkProtocol.ACTION_ATTACK_REQUEST -> {
+                        if (isHost) {
+                            val req = BattleshipNetworkProtocol.AttackRequest.fromJson(action.payload)
+                            if (req != null && !processedAttackIds.contains(req.attackId)) {
+                                val coord = CellCoordinate.ofOrNull(req.row, req.col)
+                                if (coord != null && engine.state.phase == BattleshipPhase.BATTLE &&
+                                    engine.state.activePlayer == BattleshipPlayer.PLAYER_2 &&
+                                    !engine.state.p2Radar.hasFiredAt(coord)
+                                ) {
+                                    processedAttackIds.add(req.attackId)
+                                    val outcome = engine.fireShot(BattleshipPlayer.PLAYER_2, coord)
+                                    val isHit = (outcome is ShotOutcome.Hit)
+                                    val isSunk = (outcome as? ShotOutcome.Hit)?.isSunk ?: false
+                                    val nextTurn = engine.state.activePlayer
+                                    val isGameOver = engine.state.isGameOver
+                                    val winner = engine.state.winner
 
-                            val myFleet = gameState.fleetFor(localPlayer)
-                            val targetShip = myFleet.getShipAt(coord)
-                            val isHit = targetShip != null
+                                    val event = BattleshipNetworkProtocol.AuthoritativeAttackEvent(
+                                        attackId = req.attackId,
+                                        attackerRole = "PLAYER_2",
+                                        row = coord.row,
+                                        col = coord.col,
+                                        isHit = isHit,
+                                        isSunk = isSunk,
+                                        nextTurnRole = nextTurn.name,
+                                        isGameOver = isGameOver,
+                                        winnerRole = winner?.name
+                                    )
+                                    multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_ATTACK_EVENT, event.toJson())
 
-                            val updatedIncoming = myFleet.incomingShots + (coord to isHit)
-                            val updatedMyFleet = myFleet.copy(incomingShots = updatedIncoming)
-                            val isSunk = targetShip != null && updatedMyFleet.isShipSunk(targetShip)
-                            val sunkCode = if (isSunk && targetShip != null) targetShip.shipType.name else "NONE"
-
-                            multiplayerManager.sendAction(
-                                "BATTLESHIP_RESULT",
-                                "$r,$c,$isHit,$sunkCode"
-                            )
-
-                            engine.applyRemoteIncomingShot(
-                                remotePlayer,
-                                coord,
-                                isHit,
-                                if (isSunk) targetShip?.shipType else null
-                            )
-                            gameState = engine.state
-
-                            if (isHit) {
-                                if (isSunk) {
-                                    soundManager.playShipSunk(settings.soundEnabled, settings.vibrationEnabled)
-                                } else {
-                                    soundManager.playHit(settings.soundEnabled, settings.vibrationEnabled)
+                                    runSynchronizedAttackAnimation(
+                                        attacker = BattleshipPlayer.PLAYER_2,
+                                        coord = coord,
+                                        isHit = isHit,
+                                        isSunk = isSunk,
+                                        isGameOver = isGameOver,
+                                        winner = winner,
+                                        nextTurn = nextTurn
+                                    ) {
+                                        gameState = engine.state
+                                    }
                                 }
-                            } else {
-                                soundManager.playMiss(settings.soundEnabled, settings.vibrationEnabled)
                             }
                         }
                     }
-                    "BATTLESHIP_RESULT" -> {
-                        val parts = action.payload.split(",")
-                        if (parts.size == 4) {
-                            val r = parts[0].toIntOrNull() ?: return@collect
-                            val c = parts[1].toIntOrNull() ?: return@collect
-                            val isHit = parts[2].toBooleanStrictOrNull() ?: false
-                            val sunkName = parts[3]
-                            val sunkType = if (sunkName != "NONE") runCatching { ShipType.valueOf(sunkName) }.getOrNull() else null
+                    BattleshipNetworkProtocol.ACTION_ATTACK_EVENT -> {
+                        val event = BattleshipNetworkProtocol.AuthoritativeAttackEvent.fromJson(action.payload)
+                        if (event != null && !processedAttackIds.contains(event.attackId)) {
+                            processedAttackIds.add(event.attackId)
+                            val coord = CellCoordinate(event.row, event.col)
+                            val attacker = BattleshipPlayer.valueOf(event.attackerRole)
+                            val nextTurn = BattleshipPlayer.valueOf(event.nextTurnRole)
+                            val winner = event.winnerRole?.let { BattleshipPlayer.valueOf(it) }
 
-                            val coord = CellCoordinate(r, c)
-                            engine.applyRemoteIncomingShot(localPlayer, coord, isHit, sunkType)
-                            gameState = engine.state
-
-                            if (isHit) {
-                                if (sunkType != null) {
-                                    soundManager.playShipSunk(settings.soundEnabled, settings.vibrationEnabled)
-                                } else {
-                                    soundManager.playHit(settings.soundEnabled, settings.vibrationEnabled)
+                            if (!isHost) {
+                                runSynchronizedAttackAnimation(
+                                    attacker = attacker,
+                                    coord = coord,
+                                    isHit = event.isHit,
+                                    isSunk = event.isSunk,
+                                    isGameOver = event.isGameOver,
+                                    winner = winner,
+                                    nextTurn = nextTurn
+                                ) {
+                                    engine.applyRemoteIncomingShot(attacker, coord, event.isHit, event.isSunk)
+                                    gameState = engine.state
                                 }
-                            } else {
-                                soundManager.playMiss(settings.soundEnabled, settings.vibrationEnabled)
                             }
                         }
                     }
-                    "BATTLESHIP_REMATCH" -> {
+                    BattleshipNetworkProtocol.ACTION_REMATCH_REQUEST -> {
+                        rematchRequestedByRemote = true
+                        if (rematchRequestedByLocal) {
+                            if (isHost) {
+                                multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_REMATCH_ACCEPTED, "")
+                            }
+                            restartGame()
+                        }
+                    }
+                    BattleshipNetworkProtocol.ACTION_REMATCH_ACCEPTED -> {
                         restartGame()
                     }
                 }
             }
+        }
+    }
+
+    // Connection-loss detection
+    LaunchedEffect(lobbyState, isNearbyMode) {
+        if (isNearbyMode && lobbyState is MultiplayerLobbyState.Disconnected) {
+            showDisconnectDialog = true
+            disconnectMessage = (lobbyState as MultiplayerLobbyState.Disconnected).reason
         }
     }
 
@@ -826,7 +1037,13 @@ fun BattleshipGameView(
                     val modeLabel = when (selectedMode) {
                         GameMode.SOLO -> "VS BOT (HUNT & TARGET)"
                         GameMode.LOCAL_1V1 -> "PASS & PLAY (LOCAL 1v1)"
-                        GameMode.BLUETOOTH_1V1 -> "WIFI PLAY (PEER-TO-PEER)"
+                        GameMode.BLUETOOTH_1V1 -> {
+                            val opponentPlayer = (lobbyState as? MultiplayerLobbyState.InGame)?.players?.firstOrNull { it.isHost != isHost }
+                                ?: (lobbyState as? MultiplayerLobbyState.Connected)?.players?.firstOrNull { it.isHost != isHost }
+                            val oppName = opponentPlayer?.name ?: "Opponent"
+                            val roleStr = if (isHost) "HOST (P1)" else "CLIENT (P2)"
+                            "WIFI PLAY • $roleStr vs $oppName 📶"
+                        }
                     }
                     Text(
                         text = modeLabel,
@@ -1025,13 +1242,28 @@ fun BattleshipGameView(
                     }
                 },
                 confirmButton = {
+                    val rematchButtonText = when {
+                        !isNearbyMode -> "Play Again 🔄"
+                        rematchRequestedByLocal && !rematchRequestedByRemote -> "Waiting for Opponent... ⏳"
+                        rematchRequestedByRemote && !rematchRequestedByLocal -> "Accept Rematch! 🤝"
+                        else -> "Play Again 🔄"
+                    }
                     ChunkyButton(
-                        text = "Play Again 🔄",
-                        backgroundColor = Color(0xFF0284C7),
+                        text = rematchButtonText,
+                        backgroundColor = if (rematchRequestedByRemote && !rematchRequestedByLocal) PlayfulGreen else Color(0xFF0284C7),
+                        enabled = !isNearbyMode || (!rematchRequestedByLocal || rematchRequestedByRemote),
                         onClick = {
-                            restartGame()
-                            if (isNearbyMode) {
-                                multiplayerManager.sendAction("BATTLESHIP_REMATCH", "")
+                            if (!isNearbyMode) {
+                                restartGame()
+                            } else {
+                                rematchRequestedByLocal = true
+                                multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_REMATCH_REQUEST, "")
+                                if (rematchRequestedByRemote) {
+                                    if (isHost) {
+                                        multiplayerManager.sendAction(BattleshipNetworkProtocol.ACTION_REMATCH_ACCEPTED, "")
+                                    }
+                                    restartGame()
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -1039,7 +1271,12 @@ fun BattleshipGameView(
                 },
                 dismissButton = {
                     TextButton(
-                        onClick = onChangeMode,
+                        onClick = {
+                            if (isNearbyMode) {
+                                multiplayerManager.disconnect()
+                            }
+                            onChangeMode()
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Change Mode", fontWeight = FontWeight.Bold, color = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B))
@@ -1072,6 +1309,52 @@ fun BattleshipGameView(
                 confirmButton = {
                     TextButton(onClick = { showHelpDialog = false }) {
                         Text("Got It!", fontWeight = FontWeight.Black, color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7))
+                    }
+                }
+            )
+        }
+
+        // 6. Disconnect Alert Dialog (WiFi Play)
+        if (showDisconnectDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showDisconnectDialog = false
+                    multiplayerManager.disconnect()
+                    onChangeMode()
+                },
+                shape = RoundedCornerShape(22.dp),
+                containerColor = if (isDark) Color(0xFF0F172A) else Color(0xFFFFFFFF),
+                title = {
+                    Text(
+                        "Opponent Disconnected 📶",
+                        fontWeight = FontWeight.Black,
+                        color = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626)
+                    )
+                },
+                text = {
+                    Text(
+                        text = if (disconnectMessage.isNotBlank()) {
+                            "The WiFi multiplayer connection was interrupted: $disconnectMessage"
+                        } else {
+                            "The WiFi multiplayer connection to your opponent was lost. Please return to the menu to start or join a new naval battle."
+                        },
+                        color = if (isDark) Color(0xFFE2E8F0) else Color(0xFF334155),
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showDisconnectDialog = false
+                            multiplayerManager.disconnect()
+                            onChangeMode()
+                        }
+                    ) {
+                        Text(
+                            "Return to Menu",
+                            fontWeight = FontWeight.Black,
+                            color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+                        )
                     }
                 }
             )
@@ -1751,7 +2034,7 @@ private fun BattleArenaView(
                 Text("Shots: ${radar.totalShotsFired}", fontSize = 11.sp, color = if (isDark) Color.White else Color(0xFF172033), fontWeight = FontWeight.Bold)
                 Text("Hits: ${radar.totalHits}", fontSize = 11.sp, color = if (isDark) Color(0xFFF87171) else Color(0xFFDC2626), fontWeight = FontWeight.Bold)
                 Text("Misses: ${radar.totalMisses}", fontSize = 11.sp, color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7), fontWeight = FontWeight.Bold)
-                Text("Sunk: ${radar.sunkEnemyShips.size}/5", fontSize = 11.sp, color = if (isDark) PlayfulGreen else Color(0xFF16A34A), fontWeight = FontWeight.Bold)
+                Text("Sunk: ${radar.totalSunkCount}/5", fontSize = 11.sp, color = if (isDark) PlayfulGreen else Color(0xFF16A34A), fontWeight = FontWeight.Bold)
             }
         } else {
             // My Fleet Board (Defense)
