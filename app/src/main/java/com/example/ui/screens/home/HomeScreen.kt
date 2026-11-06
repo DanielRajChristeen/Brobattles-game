@@ -178,11 +178,11 @@ private fun PlayfulSimpleHeader(
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
-                    painter = painterResource(id = R.drawable.app_icon),
+                    painter = painterResource(id = R.drawable.app_icon_main),
                     contentDescription = "BroBattle Logo",
                     modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
