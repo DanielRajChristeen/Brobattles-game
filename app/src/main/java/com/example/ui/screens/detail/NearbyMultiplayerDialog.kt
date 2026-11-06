@@ -416,6 +416,7 @@ private fun HostLobbyContent(
 
         val isSnakes = game.id.equals("snakes_and_ladders", ignoreCase = true)
         val isLudo = game.id.equals("ludo", ignoreCase = true)
+        val isCheckers = game.id.equals("checkers", ignoreCase = true)
         val maxPlayers = if (isSnakes) 5 else if (isLudo) 4 else 2
         val canStart = players.size >= 2
 
@@ -437,6 +438,11 @@ private fun HostLobbyContent(
                         if (chessHostColor == "WHITE") "HOST • WHITE ⚪" else "HOST • BLACK ⚫"
                     } else {
                         if (chessHostColor == "WHITE") "PLAYER 2 • BLACK ⚫" else "PLAYER 2 • WHITE ⚪"
+                    }
+                    isCheckers -> if (player.isHost) {
+                        "HOST • RED 🔴"
+                    } else {
+                        "PLAYER 2 • BLACK ⚫"
                     }
                     isSnakes -> {
                         val token = snakesEmojis.getOrElse(idx) { "🎮" }
@@ -513,8 +519,10 @@ private fun JoinLobbyContent(
 ) {
     val isConnected = lobbyState is MultiplayerLobbyState.Connected
     val isConnecting = lobbyState is MultiplayerLobbyState.Connecting
-    val sessions = (lobbyState as? MultiplayerLobbyState.Discovering)?.discoveredSessions ?: emptyList()
+    val rawSessions = (lobbyState as? MultiplayerLobbyState.Discovering)?.discoveredSessions ?: emptyList()
+    val sessions = rawSessions.filter { it.gameId.equals(game.id, ignoreCase = true) }
     val isChess = game.id.equals("chess", ignoreCase = true)
+    val isCheckers = game.id.equals("checkers", ignoreCase = true)
     val chessHostColor by manager.chessHostColor.collectAsState()
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -597,6 +605,42 @@ private fun JoinLobbyContent(
                                 }
                                 Text(
                                     text = if (chessHostColor == "WHITE") "♚" else "♔",
+                                    fontSize = 22.sp
+                                )
+                            }
+                        }
+                    }
+
+                    if (isCheckers) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .border(1.5.dp, ToyboxBorder, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("checkers_joiner_color_card")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "ASSIGNED PIECES",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                    )
+                                    Text(
+                                        text = "You: BLACK ⚫ • Host: RED 🔴",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                        color = PlayfulPurple
+                                    )
+                                }
+                                Text(
+                                    text = "🏁",
                                     fontSize = 22.sp
                                 )
                             }

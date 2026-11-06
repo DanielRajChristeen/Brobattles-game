@@ -27,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -61,6 +63,7 @@ import com.example.core.engine.checkers.CheckersDifficulty
 import com.example.core.engine.checkers.CheckersEngine
 import com.example.core.engine.checkers.CheckersGameState
 import com.example.core.engine.checkers.CheckersMove
+import com.example.core.engine.checkers.CheckersNetworkProtocol
 import com.example.core.engine.checkers.CheckersRules
 import com.example.core.engine.checkers.CheckersSquare
 import com.example.core.engine.checkers.deserializeCheckersState
@@ -74,10 +77,10 @@ import com.example.ui.components.bouncyClickable
 import com.example.ui.theme.ChillTheme
 import com.example.ui.theme.PlayfulGreen
 import com.example.ui.theme.PlayfulOrange
-import com.example.ui.theme.PlayfulPink
 import com.example.ui.theme.PlayfulPurple
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 @Composable
 fun CheckersGameView(
@@ -113,10 +116,32 @@ fun CheckersGameView(
     val isHost = (lobbyState as? MultiplayerLobbyState.InGame)?.isHost
         ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
 
-    // Local player in Nearby: Host is Red (Player 1), Client is Black (Player 2)
+    // Local player role in Nearby: Host is Red (Player 1), Guest is Black (Player 2)
     val localPlayer = when (selectedMode) {
         GameMode.BLUETOOTH_1V1 -> if (isHost) PlayerId.PLAYER_1 else PlayerId.PLAYER_2
         else -> PlayerId.PLAYER_1
+    }
+
+    // Determine participant names from lobby state
+    val connectedPlayers = when (val state = lobbyState) {
+        is MultiplayerLobbyState.InGame -> state.players
+        is MultiplayerLobbyState.Connected -> state.players
+        else -> emptyList()
+    }
+    val hostName = connectedPlayers.firstOrNull { it.isHost }?.name
+        ?: if (isHost) settings.username.ifBlank { "Host" } else "Host"
+    val guestName = connectedPlayers.firstOrNull { !it.isHost }?.name
+        ?: if (!isHost) settings.username.ifBlank { "Guest" } else "Player 2"
+
+    val redPlayerTitle = when (selectedMode) {
+        GameMode.SOLO -> "YOU (RED 🔴)"
+        GameMode.LOCAL_1V1 -> "PLAYER 1 (RED 🔴)"
+        GameMode.BLUETOOTH_1V1 -> if (isHost) "$hostName (YOU • RED 🔴)" else "$hostName (OPPONENT • RED 🔴)"
+    }
+    val blackPlayerTitle = when (selectedMode) {
+        GameMode.SOLO -> "BOT (BLACK ⚫)"
+        GameMode.LOCAL_1V1 -> "PLAYER 2 (BLACK ⚫)"
+        GameMode.BLUETOOTH_1V1 -> if (isHost) "$guestName (OPPONENT • BLACK ⚫)" else "$guestName (YOU • BLACK ⚫)"
     }
 
     val engine = remember { CheckersEngine() }
@@ -126,7 +151,20 @@ fun CheckersGameView(
     var matchRecorded by remember { mutableStateOf(false) }
     var showRestartConfirmDialog by remember { mutableStateOf(false) }
     var showRulesDialog by remember { mutableStateOf(false) }
+    var showDisconnectDialog by remember { mutableStateOf(false) }
+    var disconnectReason by remember { mutableStateOf("Connection to peer was lost.") }
     var matchId by remember { mutableIntStateOf(1) }
+
+    // Networking synchronization state (Host-authoritative)
+    var expectedSeqNum by remember { mutableIntStateOf(0) }
+    var guestSeqNum by remember { mutableIntStateOf(0) }
+    val processedMoveIds = remember { mutableSetOf<String>() }
+    var isAwaitingServerResponse by remember { mutableStateOf(false) }
+
+    // Rematch handshake state
+    var rematchRequestedByLocal by remember { mutableStateOf(false) }
+    var rematchRequestedByRemote by remember { mutableStateOf(false) }
+    var rematchDeclinedMessage by remember { mutableStateOf<String?>(null) }
 
     fun vibrateTap() {
         if (settings.vibrationEnabled) {
@@ -146,7 +184,7 @@ fun CheckersGameView(
         CheckersRules.getLegalMoves(gameState).any { it.isJump }
     }
 
-    // Handles terminal game outcome sounds and haptics
+    // Trigger outcome sounds and database match recording on terminal states
     LaunchedEffect(gameState.status) {
         when (val status = gameState.status) {
             is GameStatus.MatchWon -> {
@@ -164,7 +202,6 @@ fun CheckersGameView(
                     soundManager.vibrateDefeat(settings.vibrationEnabled)
                 }
 
-                // Record match to database
                 if (!matchRecorded) {
                     matchRecorded = true
                     viewModel.repository.recordMatch(
@@ -197,17 +234,85 @@ fun CheckersGameView(
         }
     }
 
-    // Execute Move helper with sounds and haptics
-    fun executeMove(move: CheckersMove) {
+    // Host-Authoritative: Validates and applies move, broadcasts accepted result
+    fun hostProcessAuthoritativeMove(
+        moveId: String,
+        seqNum: Int,
+        senderRole: String,
+        from: CheckersSquare,
+        to: CheckersSquare
+    ) {
+        if (processedMoveIds.contains(moveId)) {
+            // Already processed this moveId, ignore to prevent duplicate execution
+            return
+        }
+
+        if (seqNum != expectedSeqNum) {
+            // Out of sequence or stale move request -> reject and resync
+            val rejectMsg = CheckersNetworkProtocol.MoveRejected(
+                moveId = moveId,
+                seqNum = expectedSeqNum,
+                reason = "Stale sequence number",
+                gameStateJson = serializeCheckersState(gameState)
+            )
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_MOVE_REJECTED, rejectMsg.toJson())
+            return
+        }
+
+        if (gameState.status !is GameStatus.InProgress) {
+            // Game already finished
+            return
+        }
+
+        if (gameState.activePlayer.name != senderRole) {
+            // Out of turn move request
+            val rejectMsg = CheckersNetworkProtocol.MoveRejected(
+                moveId = moveId,
+                seqNum = expectedSeqNum,
+                reason = "Out of turn move",
+                gameStateJson = serializeCheckersState(gameState)
+            )
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_MOVE_REJECTED, rejectMsg.toJson())
+            return
+        }
+
+        if (!from.isValid || !to.isValid || !from.isDarkPlayable || !to.isDarkPlayable) {
+            // Invalid coordinates
+            val rejectMsg = CheckersNetworkProtocol.MoveRejected(
+                moveId = moveId,
+                seqNum = expectedSeqNum,
+                reason = "Invalid coordinates",
+                gameStateJson = serializeCheckersState(gameState)
+            )
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_MOVE_REJECTED, rejectMsg.toJson())
+            return
+        }
+
+        val move = CheckersMove(from, to)
+        if (!engine.validateMove(move)) {
+            // Illegal move according to authoritative rules
+            val rejectMsg = CheckersNetworkProtocol.MoveRejected(
+                moveId = moveId,
+                seqNum = expectedSeqNum,
+                reason = "Illegal move according to Checkers rules",
+                gameStateJson = serializeCheckersState(gameState)
+            )
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_MOVE_REJECTED, rejectMsg.toJson())
+            return
+        }
+
+        // Apply move authoritatively
+        processedMoveIds.add(moveId)
+        val moveSeq = expectedSeqNum
+        expectedSeqNum++
+
         val res = engine.makeMove(move)
         if (res.success) {
             gameState = engine.state
-            val isHumanTurn = (selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_1) ||
-                (isNearbyMode && gameState.activePlayer == localPlayer) ||
-                (selectedMode == GameMode.LOCAL_1V1)
-            selectedSquare = if (res.multiJumpAvailable && isHumanTurn) move.to else null
+            val isHumanTurn = (gameState.activePlayer == localPlayer)
+            selectedSquare = if (res.multiJumpAvailable && isHumanTurn) to else null
 
-            // Sound and haptic effects based on move type
+            // Sound and haptics
             if (res.isKingPromotion) {
                 soundManager.playKingPromotion(settings.soundEnabled)
                 soundManager.vibrateKingPromotion(settings.vibrationEnabled)
@@ -219,14 +324,58 @@ fun CheckersGameView(
                 soundManager.vibrateMove(settings.vibrationEnabled)
             }
 
-            // Sync move over Wi-Fi multiplayer
-            if (isNearbyMode) {
-                val payload = "${move.from.row},${move.from.col},${move.to.row},${move.to.col}"
-                multiplayerManager.sendAction("CHECKERS_MOVE", payload)
-                if (isHost) {
-                    val syncPayload = serializeCheckersState(gameState)
-                    multiplayerManager.sendAction("CHECKERS_SYNC", syncPayload)
-                }
+            val isGameOver = gameState.status.isFinished || gameState.status is GameStatus.RoundDraw
+            val winnerRole = when (val s = gameState.status) {
+                is GameStatus.MatchWon -> s.matchWinner.name
+                is GameStatus.RoundDraw -> "DRAW"
+                else -> null
+            }
+
+            val accepted = CheckersNetworkProtocol.MoveAccepted(
+                moveId = moveId,
+                seqNum = moveSeq,
+                fromRow = from.row,
+                fromCol = from.col,
+                toRow = to.row,
+                toCol = to.col,
+                capturedRow = move.capturedSquare?.row,
+                capturedCol = move.capturedSquare?.col,
+                isKingPromotion = res.isKingPromotion,
+                multiJumpAvailable = res.multiJumpAvailable,
+                mustJumpRow = gameState.mustContinueJumpingFrom?.row,
+                mustJumpCol = gameState.mustContinueJumpingFrom?.col,
+                nextPlayer = gameState.activePlayer.name,
+                isGameOver = isGameOver,
+                winnerRole = winnerRole,
+                gameStateJson = serializeCheckersState(gameState)
+            )
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_MOVE_ACCEPTED, accepted.toJson())
+
+            // Legacy backward-compatibility broadcast
+            val legacyPayload = "${from.row},${from.col},${to.row},${to.col}"
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_LEGACY_MOVE, legacyPayload)
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_LEGACY_SYNC, accepted.gameStateJson)
+        }
+    }
+
+    // Execute Move helper for Solo and Local 1v1
+    fun executeLocalMove(move: CheckersMove) {
+        val res = engine.makeMove(move)
+        if (res.success) {
+            gameState = engine.state
+            val isHumanTurn = (selectedMode == GameMode.SOLO && gameState.activePlayer == PlayerId.PLAYER_1) ||
+                (selectedMode == GameMode.LOCAL_1V1)
+            selectedSquare = if (res.multiJumpAvailable && isHumanTurn) move.to else null
+
+            if (res.isKingPromotion) {
+                soundManager.playKingPromotion(settings.soundEnabled)
+                soundManager.vibrateKingPromotion(settings.vibrationEnabled)
+            } else if (res.isCapture) {
+                soundManager.playCapture(settings.soundEnabled)
+                soundManager.vibrateCapture(settings.vibrationEnabled)
+            } else {
+                soundManager.playCoinMove(settings.soundEnabled)
+                soundManager.vibrateMove(settings.vibrationEnabled)
             }
         }
     }
@@ -248,9 +397,8 @@ fun CheckersGameView(
 
                 val currentGameState = engine.state
                 val botMove = CheckersBot.decideMove(currentGameState, difficulty, PlayerId.PLAYER_2) ?: break
-                executeMove(botMove)
+                executeLocalMove(botMove)
 
-                // If no further jump is forced for this piece, the bot's turn is complete
                 if (engine.state.mustContinueJumpingFrom == null) {
                     break
                 }
@@ -264,52 +412,98 @@ fun CheckersGameView(
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
-                    "CHECKERS_MOVE" -> {
-                        val parts = action.payload.split(",")
-                        if (parts.size >= 4) {
-                            val from = CheckersSquare(parts[0].toInt(), parts[1].toInt())
-                            val to = CheckersSquare(parts[2].toInt(), parts[3].toInt())
-                            val move = CheckersMove(from, to)
+                    CheckersNetworkProtocol.ACTION_MOVE_REQUEST -> {
+                        val req = CheckersNetworkProtocol.MoveRequest.fromJson(action.payload)
+                        if (req != null && isHost) {
+                            hostProcessAuthoritativeMove(
+                                moveId = req.moveId,
+                                seqNum = req.seqNum,
+                                senderRole = req.senderRole,
+                                from = CheckersSquare(req.fromRow, req.fromCol),
+                                to = CheckersSquare(req.toRow, req.toCol)
+                            )
+                        }
+                    }
 
-                            if (isHost) {
-                                // Authoritative Host verifies and applies move
-                                if (gameState.activePlayer == PlayerId.PLAYER_2) {
-                                    val res = engine.makeMove(move)
-                                    if (res.success) {
-                                        gameState = engine.state
-                                        selectedSquare = null
-                                        if (res.isKingPromotion) {
-                                            soundManager.playKingPromotion(settings.soundEnabled)
-                                        } else if (res.isCapture) {
-                                            soundManager.playCapture(settings.soundEnabled)
-                                        } else {
-                                            soundManager.playCoinMove(settings.soundEnabled)
-                                        }
-                                        val syncPayload = serializeCheckersState(gameState)
-                                        multiplayerManager.sendAction("CHECKERS_SYNC", syncPayload)
-                                    } else {
-                                        val syncPayload = serializeCheckersState(gameState)
-                                        multiplayerManager.sendAction("CHECKERS_SYNC", syncPayload)
-                                    }
-                                }
-                            } else {
-                                // Client applies Host move
-                                val res = engine.makeMove(move)
-                                if (res.success) {
-                                    gameState = engine.state
-                                    selectedSquare = null
-                                    if (res.isKingPromotion) {
+                    CheckersNetworkProtocol.ACTION_MOVE_ACCEPTED -> {
+                        val accepted = CheckersNetworkProtocol.MoveAccepted.fromJson(action.payload)
+                        if (accepted != null) {
+                            isAwaitingServerResponse = false
+                            if (!processedMoveIds.contains(accepted.moveId)) {
+                                processedMoveIds.add(accepted.moveId)
+                                guestSeqNum = accepted.seqNum + 1
+
+                                val synced = deserializeCheckersState(accepted.gameStateJson)
+                                if (synced != null) {
+                                    engine.syncState(synced)
+                                    gameState = synced
+
+                                    val isMyTurnNow = (gameState.activePlayer == localPlayer)
+                                    selectedSquare = if (accepted.multiJumpAvailable && isMyTurnNow) {
+                                        CheckersSquare(accepted.mustJumpRow ?: accepted.toRow, accepted.mustJumpCol ?: accepted.toCol)
+                                    } else null
+
+                                    if (accepted.isKingPromotion) {
                                         soundManager.playKingPromotion(settings.soundEnabled)
-                                    } else if (res.isCapture) {
+                                        soundManager.vibrateKingPromotion(settings.vibrationEnabled)
+                                    } else if (accepted.capturedRow != null) {
                                         soundManager.playCapture(settings.soundEnabled)
+                                        soundManager.vibrateCapture(settings.vibrationEnabled)
                                     } else {
                                         soundManager.playCoinMove(settings.soundEnabled)
+                                        soundManager.vibrateMove(settings.vibrationEnabled)
                                     }
                                 }
                             }
                         }
                     }
-                    "CHECKERS_SYNC" -> {
+
+                    CheckersNetworkProtocol.ACTION_MOVE_REJECTED -> {
+                        val rejected = CheckersNetworkProtocol.MoveRejected.fromJson(action.payload)
+                        isAwaitingServerResponse = false
+                        selectedSquare = null
+                        if (rejected != null) {
+                            val synced = deserializeCheckersState(rejected.gameStateJson)
+                            if (synced != null) {
+                                engine.syncState(synced)
+                                gameState = synced
+                            }
+                        }
+                    }
+
+                    CheckersNetworkProtocol.ACTION_STATE_SYNC -> {
+                        isAwaitingServerResponse = false
+                        val sync = CheckersNetworkProtocol.StateSync.fromJson(action.payload)
+                        if (sync != null) {
+                            guestSeqNum = sync.seqNum
+                            val synced = deserializeCheckersState(sync.gameStateJson)
+                            if (synced != null) {
+                                engine.syncState(synced)
+                                gameState = synced
+                                selectedSquare = null
+                            }
+                        }
+                    }
+
+                    CheckersNetworkProtocol.ACTION_LEGACY_MOVE -> {
+                        // Fallback handling for legacy MOVE format if needed
+                        if (isHost) {
+                            val parts = action.payload.split(",")
+                            if (parts.size >= 4) {
+                                val from = CheckersSquare(parts[0].toInt(), parts[1].toInt())
+                                val to = CheckersSquare(parts[2].toInt(), parts[3].toInt())
+                                hostProcessAuthoritativeMove(
+                                    moveId = UUID.randomUUID().toString(),
+                                    seqNum = expectedSeqNum,
+                                    senderRole = PlayerId.PLAYER_2.name,
+                                    from = from,
+                                    to = to
+                                )
+                            }
+                        }
+                    }
+
+                    CheckersNetworkProtocol.ACTION_LEGACY_SYNC -> {
                         val synced = deserializeCheckersState(action.payload)
                         if (synced != null) {
                             engine.syncState(synced)
@@ -317,29 +511,92 @@ fun CheckersGameView(
                             selectedSquare = null
                         }
                     }
-                    "CHECKERS_REMATCH" -> {
+
+                    CheckersNetworkProtocol.ACTION_REMATCH_REQUEST -> {
+                        rematchRequestedByRemote = true
+                        rematchDeclinedMessage = null
+                        if (rematchRequestedByLocal) {
+                            // Both have accepted rematch!
+                            if (isHost) {
+                                engine.resetGame()
+                                gameState = engine.state
+                                selectedSquare = null
+                                matchRecorded = false
+                                matchId++
+                                expectedSeqNum = 0
+                                guestSeqNum = 0
+                                processedMoveIds.clear()
+                                rematchRequestedByLocal = false
+                                rematchRequestedByRemote = false
+                                multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_REMATCH_ACCEPTED, "")
+                                val syncPayload = CheckersNetworkProtocol.StateSync(0, serializeCheckersState(gameState)).toJson()
+                                multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_STATE_SYNC, syncPayload)
+                                vibrateTap()
+                            }
+                        }
+                    }
+
+                    CheckersNetworkProtocol.ACTION_REMATCH_ACCEPTED -> {
                         engine.resetGame()
                         gameState = engine.state
                         selectedSquare = null
                         matchRecorded = false
                         matchId++
+                        expectedSeqNum = 0
+                        guestSeqNum = 0
+                        processedMoveIds.clear()
+                        rematchRequestedByLocal = false
+                        rematchRequestedByRemote = false
+                        rematchDeclinedMessage = null
                         vibrateTap()
+                    }
+
+                    CheckersNetworkProtocol.ACTION_REMATCH_DECLINED -> {
+                        rematchRequestedByLocal = false
+                        rematchRequestedByRemote = false
+                        rematchDeclinedMessage = "Opponent declined rematch."
+                    }
+
+                    CheckersNetworkProtocol.ACTION_SESSION_EXIT -> {
+                        showDisconnectDialog = true
+                        disconnectReason = "Opponent left the match."
                     }
                 }
             }
         }
     }
 
-    BackHandler {
+    // Connection-loss detection
+    LaunchedEffect(lobbyState, isNearbyMode) {
+        if (isNearbyMode && lobbyState is MultiplayerLobbyState.Disconnected) {
+            val reason = (lobbyState as MultiplayerLobbyState.Disconnected).reason
+            disconnectReason = reason.ifBlank { "Lost connection to peer." }
+            showDisconnectDialog = true
+        }
+    }
+
+    fun handleExit() {
+        if (isNearbyMode) {
+            multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_SESSION_EXIT, "")
+            multiplayerManager.disconnect()
+        }
         onExit()
+    }
+
+    BackHandler {
+        handleExit()
     }
 
     fun handleSquareClick(square: CheckersSquare) {
         if (gameState.status !is GameStatus.InProgress) return
+        if (showDisconnectDialog) return
 
         // Prevent moving when it's not the local player's turn
         if (selectedMode == GameMode.SOLO && gameState.activePlayer != PlayerId.PLAYER_1) return
-        if (isNearbyMode && gameState.activePlayer != localPlayer) return
+        if (isNearbyMode) {
+            if (gameState.activePlayer != localPlayer) return
+            if (isAwaitingServerResponse) return
+        }
 
         val pieceAtSquare = gameState.board[square]
 
@@ -360,7 +617,35 @@ fun CheckersGameView(
         if (currentSelected != null) {
             val destinationMove = legalMovesForSelected.firstOrNull { it.to == square }
             if (destinationMove != null) {
-                executeMove(destinationMove)
+                if (isNearbyMode) {
+                    if (isHost) {
+                        // Authoritative Host makes move
+                        val moveId = UUID.randomUUID().toString()
+                        hostProcessAuthoritativeMove(
+                            moveId = moveId,
+                            seqNum = expectedSeqNum,
+                            senderRole = PlayerId.PLAYER_1.name,
+                            from = destinationMove.from,
+                            to = destinationMove.to
+                        )
+                    } else {
+                        // Guest sends move request to Host
+                        isAwaitingServerResponse = true
+                        val moveId = UUID.randomUUID().toString()
+                        val req = CheckersNetworkProtocol.MoveRequest(
+                            moveId = moveId,
+                            seqNum = guestSeqNum,
+                            senderRole = PlayerId.PLAYER_2.name,
+                            fromRow = destinationMove.from.row,
+                            fromCol = destinationMove.from.col,
+                            toRow = destinationMove.to.row,
+                            toCol = destinationMove.to.col
+                        )
+                        multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_MOVE_REQUEST, req.toJson())
+                    }
+                } else {
+                    executeLocalMove(destinationMove)
+                }
             } else {
                 // Tapped an invalid or empty square: deselect unless locked in multi-jump
                 if (gameState.mustContinueJumpingFrom == null) {
@@ -395,7 +680,7 @@ fun CheckersGameView(
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surface)
                         .border(1.5.dp, colors.border, CircleShape)
-                        .bouncyClickable(onClick = onExit)
+                        .bouncyClickable(onClick = ::handleExit)
                         .testTag("checkers_back_button"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -406,7 +691,7 @@ fun CheckersGameView(
                     )
                 }
 
-                // Title Banner
+                // Title Banner with Wi-Fi indicator if Nearby
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = "🏁 Checkers",
@@ -416,6 +701,15 @@ fun CheckersGameView(
                         ),
                         color = MaterialTheme.colorScheme.onBackground
                     )
+                    if (isNearbyMode) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.Wifi,
+                            contentDescription = "Wi-Fi Multiplayer",
+                            tint = PlayfulPurple,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
                 // Right action buttons: Rules & Restart
@@ -439,23 +733,25 @@ fun CheckersGameView(
                         )
                     }
 
-                    // Restart Button with Confirmation
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.5.dp, colors.border, CircleShape)
-                            .bouncyClickable { showRestartConfirmDialog = true }
-                            .testTag("checkers_restart_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Restart Game",
-                            tint = PlayfulOrange,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    // Restart Button with Confirmation (disabled in nearby during active match)
+                    if (!isNearbyMode) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surface)
+                                .border(1.5.dp, colors.border, CircleShape)
+                                .bouncyClickable { showRestartConfirmDialog = true }
+                                .testTag("checkers_restart_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Restart Game",
+                                tint = PlayfulOrange,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -469,8 +765,9 @@ fun CheckersGameView(
             ) {
                 // Red Player Card
                 CheckersPlayerCard(
-                    title = if (selectedMode == GameMode.SOLO) "YOU (RED)" else if (isNearbyMode && !isHost) "OPPONENT (RED)" else "PLAYER 1 (RED)",
+                    title = redPlayerTitle,
                     piecesRemaining = gameState.redPiecesRemaining,
+                    capturedPieces = 12 - gameState.blackPiecesRemaining,
                     kingsCount = gameState.redKings,
                     isActiveTurn = gameState.activePlayer == PlayerId.PLAYER_1 && gameState.status is GameStatus.InProgress,
                     indicatorColor = Color(0xFFB93815),
@@ -479,8 +776,9 @@ fun CheckersGameView(
 
                 // Black Player Card
                 CheckersPlayerCard(
-                    title = if (selectedMode == GameMode.SOLO) "BOT (BLACK)" else if (isNearbyMode && isHost) "OPPONENT (BLACK)" else "PLAYER 2 (BLACK)",
+                    title = blackPlayerTitle,
                     piecesRemaining = gameState.blackPiecesRemaining,
+                    capturedPieces = 12 - gameState.redPiecesRemaining,
                     kingsCount = gameState.blackKings,
                     isActiveTurn = gameState.activePlayer == PlayerId.PLAYER_2 && gameState.status is GameStatus.InProgress,
                     indicatorColor = Color(0xFF292420),
@@ -497,7 +795,8 @@ fun CheckersGameView(
                 isBotThinking = isBotThinking,
                 isNearbyMode = isNearbyMode,
                 localPlayer = localPlayer,
-                hasMandatoryCaptures = hasMandatoryCaptures
+                hasMandatoryCaptures = hasMandatoryCaptures,
+                isAwaitingResponse = isAwaitingServerResponse
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -518,19 +817,20 @@ fun CheckersGameView(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center
             ) {
+                val modeLabel = when (selectedMode) {
+                    GameMode.SOLO -> "🤖 VS BOT (${difficulty.title})"
+                    GameMode.LOCAL_1V1 -> "👥 2 PLAYERS (PASS & PLAY)"
+                    GameMode.BLUETOOTH_1V1 -> "📱 WI-FI PLAY (${if (isHost) "HOST • RED 🔴" else "GUEST • BLACK ⚫"})"
+                }
                 PlayfulPill(
-                    text = when (selectedMode) {
-                        GameMode.SOLO -> "🤖 VS BOT (${difficulty.title})"
-                        GameMode.LOCAL_1V1 -> "👥 2 PLAYERS (PASS & PLAY)"
-                        GameMode.BLUETOOTH_1V1 -> "📱 WI-FI MULTIPLAYER (${if (isHost) "HOST" else "JOINED"})"
-                    },
+                    text = modeLabel,
                     backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
                     textColor = PlayfulPurple
                 )
             }
         }
 
-        // Restart Confirmation Dialog
+        // Restart Confirmation Dialog (Solo / Local mode)
         if (showRestartConfirmDialog) {
             AlertDialog(
                 onDismissRequest = { showRestartConfirmDialog = false },
@@ -561,9 +861,6 @@ fun CheckersGameView(
                             matchRecorded = false
                             matchId++
                             vibrateTap()
-                            if (isNearbyMode) {
-                                multiplayerManager.sendAction("CHECKERS_REMATCH", "rematch")
-                            }
                         },
                         backgroundColor = PlayfulOrange,
                         modifier = Modifier.testTag("confirm_restart_button")
@@ -573,6 +870,54 @@ fun CheckersGameView(
                     TextButton(onClick = { showRestartConfirmDialog = false }) {
                         Text("Cancel", fontWeight = FontWeight.Bold)
                     }
+                }
+            )
+        }
+
+        // Disconnect Dialog during Nearby Multiplayer
+        if (showDisconnectDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showDisconnectDialog = false
+                    multiplayerManager.disconnect()
+                    onChangeMode()
+                },
+                shape = RoundedCornerShape(24.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.WifiOff,
+                        contentDescription = "Connection Lost",
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(36.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Connection Lost",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Text(
+                        text = disconnectReason,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    ChunkyButton(
+                        text = "Back to Lobby 🏠",
+                        onClick = {
+                            showDisconnectDialog = false
+                            multiplayerManager.disconnect()
+                            onChangeMode()
+                        },
+                        backgroundColor = PlayfulPurple,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             )
         }
@@ -646,7 +991,6 @@ fun CheckersGameView(
             exit = fadeOut()
         ) {
             val status = gameState.status
-            val isWon = status is GameStatus.MatchWon
             val winner = (status as? GameStatus.MatchWon)?.matchWinner
             val isLocalWinner = when (selectedMode) {
                 GameMode.SOLO -> winner == PlayerId.PLAYER_1
@@ -702,7 +1046,7 @@ fun CheckersGameView(
                         text = when {
                             status is GameStatus.RoundDraw -> "40 moves with no capture or promotion. Game ended in a fair draw."
                             selectedMode == GameMode.LOCAL_1V1 -> "Masterful checkmating tactics and board control!"
-                            isLocalWinner -> "You outmaneuvered your opponent and crowned the board!"
+                            isLocalWinner -> "You outmaneuvered your opponent and conquered the board!"
                             else -> "Nice battle! Sharpen your kings and try again."
                         },
                         style = MaterialTheme.typography.bodyMedium,
@@ -710,23 +1054,65 @@ fun CheckersGameView(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
+                    if (rematchDeclinedMessage != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = rematchDeclinedMessage!!,
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                            color = Color(0xFFEF4444),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    // Action buttons: Rematch & Change Mode
+                    // Rematch button
+                    val rematchButtonText = when {
+                        !isNearbyMode -> "Play Again 🔄"
+                        rematchRequestedByRemote && !rematchRequestedByLocal -> "Accept Rematch! 🤝"
+                        rematchRequestedByLocal && !rematchRequestedByRemote -> "Waiting for Opponent... ⏳"
+                        else -> "Request Rematch 🔄"
+                    }
+                    val isRematchEnabled = !isNearbyMode || (!rematchRequestedByLocal || rematchRequestedByRemote)
+
                     ChunkyButton(
-                        text = "Play Again 🔄",
+                        text = rematchButtonText,
                         onClick = {
-                            engine.resetGame()
-                            gameState = engine.state
-                            selectedSquare = null
-                            matchRecorded = false
-                            matchId++
-                            vibrateTap()
-                            if (isNearbyMode) {
-                                multiplayerManager.sendAction("CHECKERS_REMATCH", "rematch")
+                            if (!isNearbyMode) {
+                                engine.resetGame()
+                                gameState = engine.state
+                                selectedSquare = null
+                                matchRecorded = false
+                                matchId++
+                                vibrateTap()
+                            } else {
+                                rematchRequestedByLocal = true
+                                multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_REMATCH_REQUEST, "")
+                                if (rematchRequestedByRemote) {
+                                    // Both accepted!
+                                    if (isHost) {
+                                        engine.resetGame()
+                                        gameState = engine.state
+                                        selectedSquare = null
+                                        matchRecorded = false
+                                        matchId++
+                                        expectedSeqNum = 0
+                                        guestSeqNum = 0
+                                        processedMoveIds.clear()
+                                        rematchRequestedByLocal = false
+                                        rematchRequestedByRemote = false
+                                        multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_REMATCH_ACCEPTED, "")
+                                        val syncPayload = CheckersNetworkProtocol.StateSync(0, serializeCheckersState(gameState)).toJson()
+                                        multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_STATE_SYNC, syncPayload)
+                                        vibrateTap()
+                                    } else {
+                                        multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_REMATCH_ACCEPTED, "")
+                                    }
+                                }
                             }
                         },
-                        backgroundColor = PlayfulGreen,
+                        enabled = isRematchEnabled,
+                        backgroundColor = if (rematchRequestedByRemote && !rematchRequestedByLocal) PlayfulGreen else PlayfulOrange,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("checkers_play_again_button")
@@ -735,7 +1121,17 @@ fun CheckersGameView(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     TextButton(
-                        onClick = onChangeMode,
+                        onClick = {
+                            if (isNearbyMode) {
+                                if (rematchRequestedByRemote) {
+                                    rematchRequestedByRemote = false
+                                    multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_REMATCH_DECLINED, "")
+                                }
+                                multiplayerManager.sendAction(CheckersNetworkProtocol.ACTION_SESSION_EXIT, "")
+                                multiplayerManager.disconnect()
+                            }
+                            onChangeMode()
+                        },
                         modifier = Modifier.testTag("checkers_change_mode_button")
                     ) {
                         Text(
@@ -754,6 +1150,7 @@ fun CheckersGameView(
 private fun CheckersPlayerCard(
     title: String,
     piecesRemaining: Int,
+    capturedPieces: Int,
     kingsCount: Int,
     isActiveTurn: Boolean,
     indicatorColor: Color,
@@ -811,7 +1208,7 @@ private fun CheckersPlayerCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Pieces",
+                        text = "Pieces (+$capturedPieces)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -843,9 +1240,9 @@ private fun CheckersStatusBanner(
     isBotThinking: Boolean,
     isNearbyMode: Boolean,
     localPlayer: PlayerId,
-    hasMandatoryCaptures: Boolean
+    hasMandatoryCaptures: Boolean,
+    isAwaitingResponse: Boolean = false
 ) {
-    val activeColor = if (state.activePlayer == PlayerId.PLAYER_1) Color(0xFFDC2626) else Color(0xFF1E293B)
     val isMyTurn = when {
         selectedMode == GameMode.SOLO -> state.activePlayer == PlayerId.PLAYER_1
         isNearbyMode -> state.activePlayer == localPlayer
@@ -853,15 +1250,17 @@ private fun CheckersStatusBanner(
     }
 
     val bannerText = when {
+        isAwaitingResponse -> "⏳ SENDING MOVE TO HOST..."
         isBotThinking -> if (state.mustContinueJumpingFrom != null) "🤖 BOT MULTI-JUMPING! ⚡" else "🤖 BOT IS THINKING... 💭"
-        state.mustContinueJumpingFrom != null -> if (isMyTurn) "⚡ MULTI-JUMP! KEEP JUMPING" else "🤖 BOT MULTI-JUMPING! ⚡"
+        state.mustContinueJumpingFrom != null -> if (isMyTurn) "⚡ MULTI-JUMP! KEEP JUMPING" else "⏳ OPPONENT MULTI-JUMPING! ⚡"
         hasMandatoryCaptures -> "⚔️ MANDATORY CAPTURE REQUIRED!"
         selectedMode == GameMode.SOLO -> if (isMyTurn) "🔴 YOUR TURN (RED)" else "⚫ BOT'S TURN"
-        isNearbyMode -> if (isMyTurn) "🟢 YOUR TURN (${localPlayer.displayName.uppercase()})" else "⏳ OPPONENT'S TURN"
+        isNearbyMode -> if (isMyTurn) "🟢 YOUR TURN (${if (localPlayer == PlayerId.PLAYER_1) "RED 🔴" else "BLACK ⚫"})" else "⏳ OPPONENT'S TURN (${if (localPlayer == PlayerId.PLAYER_1) "BLACK ⚫" else "RED 🔴"})"
         else -> if (state.activePlayer == PlayerId.PLAYER_1) "🔴 RED'S TURN" else "⚫ BLACK'S TURN"
     }
 
     val bannerBg = when {
+        isAwaitingResponse -> PlayfulOrange
         state.mustContinueJumpingFrom != null -> PlayfulOrange
         hasMandatoryCaptures -> Color(0xFFDC2626)
         isMyTurn -> PlayfulGreen
