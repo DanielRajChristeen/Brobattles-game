@@ -59,6 +59,68 @@ class LocalWifiMultiplayerManager(
         }
     }
 
+    // Reconnection & Pause grace period (e.g. 10s countdown on screen lock or brief network drop)
+    private val _isConnectionPaused = MutableStateFlow<Boolean>(false)
+    val isConnectionPaused: StateFlow<Boolean> = _isConnectionPaused.asStateFlow()
+
+    private val _pauseRemainingSeconds = MutableStateFlow<Int?>(null)
+    val pauseRemainingSeconds: StateFlow<Int?> = _pauseRemainingSeconds.asStateFlow()
+
+    private val _pauseReason = MutableStateFlow<String>("")
+    val pauseReason: StateFlow<String> = _pauseReason.asStateFlow()
+
+    // Host live config preview for connected guests before game start
+    private val _hostConfigPreview = MutableStateFlow<String>("")
+    val hostConfigPreview: StateFlow<String> = _hostConfigPreview.asStateFlow()
+
+    private var graceJob: Job? = null
+    private var clientAutoReconnectJob: Job? = null
+    private var lastInGameSession: DiscoveredSession? = null
+    private var lastPlayerName: String = ""
+
+    fun broadcastHostConfigPreview(configJson: String) {
+        _hostConfigPreview.value = configJson
+        val currentState = _lobbyState.value
+        if (currentState is MultiplayerLobbyState.Connected && currentState.isHost) {
+            sendAction("HOST_CONFIG_PREVIEW", configJson)
+        }
+    }
+
+    fun updateHostRoomCapacity(newMaxPlayers: Int) {
+        val current = _lobbyState.value
+        if (current is MultiplayerLobbyState.Hosting) {
+            val updated = current.session.copy(maxPlayers = newMaxPlayers)
+            _lobbyState.value = current.copy(session = updated)
+            discovery.startAnnouncing(updated, scope)
+        } else if (current is MultiplayerLobbyState.Connected && current.isHost) {
+            val updated = current.session.copy(maxPlayers = newMaxPlayers)
+            _lobbyState.value = current.copy(session = updated)
+            discovery.startAnnouncing(updated, scope)
+        }
+    }
+
+    fun notifyConnectionResumed() {
+        scope.launch(Dispatchers.Main) {
+            graceJob?.cancel()
+            graceJob = null
+            clientAutoReconnectJob?.cancel()
+            clientAutoReconnectJob = null
+            _isConnectionPaused.value = false
+            _pauseRemainingSeconds.value = null
+            sendAction("WIFI_RESUME_GAME", "RESUMED")
+        }
+    }
+
+    fun exitLobbyFromGrace() {
+        graceJob?.cancel()
+        graceJob = null
+        clientAutoReconnectJob?.cancel()
+        clientAutoReconnectJob = null
+        _isConnectionPaused.value = false
+        _pauseRemainingSeconds.value = null
+        disconnect()
+    }
+
     private val localPlayerId = UUID.randomUUID().toString()
 
     // Host networking state
@@ -265,13 +327,18 @@ class LocalWifiMultiplayerManager(
                     broadcastToClients(playerListMsg)
 
                     val updatedSession = session.copy(currentPlayers = currentPlayersSnapshot.size)
-                    _lobbyState.value = MultiplayerLobbyState.Connected(
-                        session = updatedSession,
-                        localPlayer = hostPlayer,
-                        players = currentPlayersSnapshot,
-                        isHost = true
-                    )
+                    if (_lobbyState.value !is MultiplayerLobbyState.InGame) {
+                        _lobbyState.value = MultiplayerLobbyState.Connected(
+                            session = updatedSession,
+                            localPlayer = hostPlayer,
+                            players = currentPlayersSnapshot,
+                            isHost = true
+                        )
+                    }
                     discovery.startAnnouncing(updatedSession, scope)
+                    if (_isConnectionPaused.value) {
+                        notifyConnectionResumed()
+                    }
 
                     // Read loop for this connected client
                     var line: String? = reader.readLine()
@@ -343,6 +410,8 @@ class LocalWifiMultiplayerManager(
     ) {
         discovery.stopDiscovery()
         _lobbyState.value = MultiplayerLobbyState.Connecting(session)
+        lastInGameSession = session
+        lastPlayerName = playerName
 
         scope.launch(Dispatchers.IO) {
             try {
@@ -528,6 +597,12 @@ class LocalWifiMultiplayerManager(
                     val json = JSONObject(msg.payload)
                     val actionType = json.getString("actionType")
                     val actionData = json.getString("actionData")
+                    if (actionType == "WIFI_RESUME_GAME") {
+                        _isConnectionPaused.value = false
+                        _pauseRemainingSeconds.value = null
+                        graceJob?.cancel()
+                        graceJob = null
+                    }
                     _incomingActions.tryEmit(PlayerAction(msg.senderId, actionType, actionData))
                 } catch (e: Exception) {
                     Log.w(TAG, "Error parsing client action payload: ${e.message}")
@@ -733,6 +808,15 @@ class LocalWifiMultiplayerManager(
                     val actionData = json.getString("actionData")
                     if (actionType == "CHESS_COLOR_ASSIGNMENT") {
                         _chessHostColor.value = actionData
+                    } else if (actionType == "HOST_CONFIG_PREVIEW") {
+                        _hostConfigPreview.value = actionData
+                    } else if (actionType == "WIFI_RESUME_GAME") {
+                        _isConnectionPaused.value = false
+                        _pauseRemainingSeconds.value = null
+                        graceJob?.cancel()
+                        graceJob = null
+                        clientAutoReconnectJob?.cancel()
+                        clientAutoReconnectJob = null
                     }
                     _incomingActions.tryEmit(PlayerAction(msg.senderId, actionType, actionData))
                 } catch (e: Exception) {
@@ -772,13 +856,106 @@ class LocalWifiMultiplayerManager(
     private fun onPeerDisconnected(reason: String) {
         scope.launch(Dispatchers.Main) {
             val current = _lobbyState.value
-            if (current is MultiplayerLobbyState.Connected || current is MultiplayerLobbyState.InGame) {
+            if (current is MultiplayerLobbyState.InGame) {
+                if (_isConnectionPaused.value) return@launch
+
+                _isConnectionPaused.value = true
+                _pauseReason.value = reason
+                _pauseRemainingSeconds.value = 10
+
+                lastInGameSession = current.session
+
+                // If Client, launch background auto-reconnect attempts to recover from screen lock
+                if (!current.isHost) {
+                    startClientAutoReconnect(current.session)
+                }
+
+                graceJob?.cancel()
+                graceJob = scope.launch(Dispatchers.Main) {
+                    for (sec in 10 downTo 1) {
+                        _pauseRemainingSeconds.value = sec
+                        kotlinx.coroutines.delay(1000)
+                        if (!_isConnectionPaused.value) {
+                            return@launch
+                        }
+                    }
+                    _pauseRemainingSeconds.value = 0
+                    _isConnectionPaused.value = false
+                    clientAutoReconnectJob?.cancel()
+                    _lobbyState.value = MultiplayerLobbyState.Disconnected("Opponent disconnected (10s reconnect window expired)")
+                }
+            } else if (current is MultiplayerLobbyState.Connected) {
                 _lobbyState.value = MultiplayerLobbyState.Disconnected(reason)
             }
         }
     }
 
+    private fun startClientAutoReconnect(session: DiscoveredSession) {
+        clientAutoReconnectJob?.cancel()
+        clientAutoReconnectJob = scope.launch(Dispatchers.IO) {
+            var attempts = 0
+            while (_isConnectionPaused.value && attempts < 8 && isActive) {
+                kotlinx.coroutines.delay(1200)
+                try {
+                    val socket = Socket()
+                    socket.connect(InetSocketAddress(session.hostIp, session.port), 2000)
+                    socket.tcpNoDelay = true
+
+                    val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+                    val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream()))
+
+                    clientSocket = socket
+                    clientWriter = writer
+
+                    // Send Reconnect Join Request with existing local player ID
+                    val joinMsg = MultiplayerMessage(
+                        type = MultiplayerMessage.TYPE_JOIN_REQUEST,
+                        sessionId = session.sessionId,
+                        senderId = localPlayerId,
+                        payload = if (customUsername.isNotBlank()) customUsername else localDeviceName
+                    )
+                    sendRawToWriter(writer, joinMsg)
+
+                    // Re-start reader loop
+                    clientReaderJob = scope.launch(Dispatchers.IO) {
+                        try {
+                            var line: String? = reader.readLine()
+                            while (line != null && isActive) {
+                                val msg = MultiplayerMessage.fromJson(line)
+                                if (msg != null) {
+                                    handleMessageFromServer(msg, session, localDeviceName)
+                                }
+                                line = reader.readLine()
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Reconnected client reader ended: ${e.message}")
+                        } finally {
+                            onPeerDisconnected("Lost connection to host")
+                        }
+                    }
+
+                    // Successfully re-connected!
+                    withContext(Dispatchers.Main) {
+                        notifyConnectionResumed()
+                    }
+                    break
+                } catch (e: Exception) {
+                    attempts++
+                    Log.d(TAG, "Reconnect attempt $attempts failed: ${e.message}")
+                }
+            }
+        }
+    }
+
     fun disconnect() {
+        graceJob?.cancel()
+        graceJob = null
+        clientAutoReconnectJob?.cancel()
+        clientAutoReconnectJob = null
+        _isConnectionPaused.value = false
+        _pauseRemainingSeconds.value = null
+        _pauseReason.value = ""
+
         discovery.stopAnnouncing()
         discovery.stopDiscovery()
 

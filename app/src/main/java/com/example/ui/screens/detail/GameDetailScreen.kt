@@ -274,6 +274,22 @@ fun GameDetailScreen(
                         if (configTarget > 0) {
                             targetScore = configTarget
                         }
+                        val ludoCount = config.optInt("ludoPlayerCount", -1)
+                        if (ludoCount in 2..4) {
+                            ludoPlayerCount = ludoCount
+                        }
+                        val snakesCount = config.optInt("snakesPlayerCount", -1)
+                        if (snakesCount in 2..5) {
+                            snakesPlayerCount = snakesCount
+                        }
+                        val dotSizeStr = config.optString("dotBoardSize", "")
+                        if (dotSizeStr.isNotBlank()) {
+                            try {
+                                dotBoardSize = DotBoardSize.valueOf(dotSizeStr)
+                            } catch (_: Exception) {
+                                // fallback to current board size
+                            }
+                        }
                     } catch (e: Exception) {
                         // ignore
                     }
@@ -684,6 +700,8 @@ fun GameDetailScreen(
                 targetScore = targetScore,
                 username = settings.username,
                 ludoPlayerCount = ludoPlayerCount,
+                snakesPlayerCount = snakesPlayerCount,
+                dotBoardSize = dotBoardSize,
                 onDismiss = { showNearbyDialog = false },
                 onGameStarted = {
                     showNearbyDialog = false
@@ -692,23 +710,13 @@ fun GameDetailScreen(
             )
         }
 
-        // Opponent disconnected alert during active multiplayer session
-        if (isPlaying && isNearbyMode && lobbyState is MultiplayerLobbyState.Disconnected) {
-            val reason = (lobbyState as MultiplayerLobbyState.Disconnected).reason
-            AlertDialog(
-                onDismissRequest = {
+        // Show Nearby Reconnection Dialog during active multiplayer pause / disconnect
+        if (isPlaying && isNearbyMode) {
+            NearbyReconnectDialog(
+                manager = multiplayerManager,
+                onExitToLobby = {
                     isPlaying = false
                     multiplayerManager.disconnect()
-                },
-                title = { Text("Opponent Disconnected", fontWeight = FontWeight.Bold) },
-                text = { Text(reason) },
-                confirmButton = {
-                    TextButton(onClick = {
-                        isPlaying = false
-                        multiplayerManager.disconnect()
-                    }) {
-                        Text("Back to Lobby")
-                    }
                 }
             )
         }
@@ -1028,8 +1036,8 @@ private fun CleanLaunchView(
             }
         }
 
-        // DOT CONNECTIONS: BOARD SIZE & BOT DIFFICULTY
-        if (game.id.equals("dot_connections", ignoreCase = true)) {
+        // DOT CONNECTIONS: BOARD SIZE & BOT DIFFICULTY (Hidden in Nearby mode as Host configures inside Lobby)
+        if (game.id.equals("dot_connections", ignoreCase = true) && selectedMode != GameMode.BLUETOOTH_1V1) {
             Spacer(modifier = Modifier.height(14.dp))
             Text(
                 text = "BOARD SIZE",
@@ -1228,7 +1236,7 @@ private fun CleanLaunchView(
                         }
                     }
                 }
-            } else {
+            } else if (selectedMode == GameMode.LOCAL_1V1) {
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(
                     text = "PLAYER COUNT",
@@ -1342,7 +1350,7 @@ private fun CleanLaunchView(
             }
         }
 
-        if (game.targetScoreOptions.isNotEmpty()) {
+        if (game.targetScoreOptions.isNotEmpty() && selectedMode != GameMode.BLUETOOTH_1V1) {
             Spacer(modifier = Modifier.height(20.dp))
 
             // Target Score Chips
