@@ -12,6 +12,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.screens.detail.GameDetailScreen
 import com.example.ui.screens.home.HomeScreen
 import com.example.ui.screens.settings.SettingsScreen
+import com.example.ui.screens.splash.SplashScreen
 import com.example.ui.screens.stats.StatsScreen
 
 @Composable
@@ -23,8 +24,19 @@ fun AppNavGraph(
 
     NavHost(
         navController = navController,
-        startDestination = NavRoutes.HOME
+        startDestination = NavRoutes.SPLASH
     ) {
+        composable(NavRoutes.SPLASH) {
+            SplashScreen(
+                soundEnabled = settings.soundEnabled,
+                onSplashComplete = {
+                    navController.navigate(NavRoutes.HOME) {
+                        popUpTo(NavRoutes.SPLASH) { inclusive = true }
+                    }
+                }
+            )
+        }
+
         composable(NavRoutes.HOME) {
             HomeScreen(
                 username = settings.username,

@@ -1,6 +1,7 @@
 package com.example.ui.navigation
 
 object NavRoutes {
+    const val SPLASH = "splash"
     const val HOME = "home"
     const val GAME_DETAIL = "game_detail/{gameId}"
     const val SETTINGS = "settings"
