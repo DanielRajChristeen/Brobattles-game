@@ -5,10 +5,24 @@ sealed class ChessGameStatus {
     data class Checkmate(val winner: PieceColor) : ChessGameStatus()
     object Stalemate : ChessGameStatus()
     object DrawByFiftyMoves : ChessGameStatus()
+    object DrawBySeventyFiveMoves : ChessGameStatus()
+    object DrawByThreefoldRepetition : ChessGameStatus()
+    object DrawByFivefoldRepetition : ChessGameStatus()
     object DrawByInsufficientMaterial : ChessGameStatus()
 
     val isGameOver: Boolean
         get() = this !is InProgress
+
+    val isDraw: Boolean
+        get() = when (this) {
+            is Stalemate,
+            is DrawByFiftyMoves,
+            is DrawBySeventyFiveMoves,
+            is DrawByThreefoldRepetition,
+            is DrawByFivefoldRepetition,
+            is DrawByInsufficientMaterial -> true
+            else -> false
+        }
 }
 
 data class ChessGameState(
@@ -25,8 +39,22 @@ data class ChessGameState(
     val inCheck: Boolean = false,
     val capturedByWhite: List<PieceType> = emptyList(), // Black pieces captured by White
     val capturedByBlack: List<PieceType> = emptyList(), // White pieces captured by Black
-    val lastMove: ChessMove? = null
+    val lastMove: ChessMove? = null,
+    val canonicalPositionKey: String = "",
+    val positionHistory: List<String> = emptyList()
 ) {
+    val currentPositionRepetitions: Int
+        get() = if (canonicalPositionKey.isNotEmpty()) positionHistory.count { it == canonicalPositionKey } else 1
+
+    val isThreefoldRepetitionClaimable: Boolean
+        get() = status is ChessGameStatus.InProgress && currentPositionRepetitions >= 3
+
+    val isFiftyMoveDrawClaimable: Boolean
+        get() = status is ChessGameStatus.InProgress && halfmoveClock >= 100
+
+    val isDrawClaimable: Boolean
+        get() = isThreefoldRepetitionClaimable || isFiftyMoveDrawClaimable
+
     fun pieceAt(square: ChessSquare): ChessPiece? = board[square.index]
     fun pieceAt(row: Int, col: Int): ChessPiece? =
         if (ChessSquare.isValid(row, col)) board[row * 8 + col] else null
@@ -59,6 +87,7 @@ data class ChessGameState(
         if (status != other.status) return false
         if (inCheck != other.inCheck) return false
         if (lastMove != other.lastMove) return false
+        if (canonicalPositionKey != other.canonicalPositionKey) return false
         return true
     }
 
@@ -66,10 +95,13 @@ data class ChessGameState(
         var result = board.contentHashCode()
         result = 31 * result + activeColor.hashCode()
         result = 31 * result + status.hashCode()
+        result = 31 * result + canonicalPositionKey.hashCode()
         return result
     }
 
     companion object {
+        const val INITIAL_POSITION_KEY = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
+
         fun initial(): ChessGameState {
             val b = arrayOfNulls<ChessPiece>(64)
 
@@ -103,7 +135,11 @@ data class ChessGameState(
             b[7 * 8 + 6] = ChessPiece(PieceType.KNIGHT, PieceColor.WHITE)
             b[7 * 8 + 7] = ChessPiece(PieceType.ROOK, PieceColor.WHITE)
 
-            return ChessGameState(board = b)
+            return ChessGameState(
+                board = b,
+                canonicalPositionKey = INITIAL_POSITION_KEY,
+                positionHistory = listOf(INITIAL_POSITION_KEY)
+            )
         }
     }
 }

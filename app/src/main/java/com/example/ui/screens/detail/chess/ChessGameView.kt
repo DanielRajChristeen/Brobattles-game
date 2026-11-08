@@ -1,6 +1,7 @@
 package com.example.ui.screens.detail.chess
 
 import android.view.HapticFeedbackConstants
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -99,6 +100,10 @@ fun ChessGameView(
     val settings by viewModel.settings.collectAsState()
     val colors = ChillTheme.colors
 
+    BackHandler {
+        onChangeMode()
+    }
+
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
@@ -143,7 +148,37 @@ fun ChessGameView(
             gameState.status is ChessGameStatus.InProgress
 
         if (isBotTurn) {
-            // First show "BOT'S TURN ♟️" so player can clearly see turn indicator transition
+            // First check if the bot can / should claim a threefold repetition draw!
+            if (gameState.isThreefoldRepetitionClaimable) {
+                val eval = com.example.core.engine.chess.ChessBot.evaluatePosition(gameState, gameState.activeColor)
+                // If bot is not decisively winning (eval <= 150), claim draw immediately
+                if (eval <= 150) {
+                    isBotThinking = false
+                    delay(350)
+                    if (engine.claimThreefoldRepetitionDraw()) {
+                        gameState = engine.state
+                        selectedSquare = null
+                        soundManager.playDraw(settings.soundEnabled)
+                        vibrate()
+                        return@LaunchedEffect
+                    }
+                }
+            } else if (gameState.isFiftyMoveDrawClaimable) {
+                val eval = com.example.core.engine.chess.ChessBot.evaluatePosition(gameState, gameState.activeColor)
+                if (eval <= 150) {
+                    isBotThinking = false
+                    delay(350)
+                    if (engine.claimFiftyMoveDraw()) {
+                        gameState = engine.state
+                        selectedSquare = null
+                        soundManager.playDraw(settings.soundEnabled)
+                        vibrate()
+                        return@LaunchedEffect
+                    }
+                }
+            }
+
+            // Show "BOT'S TURN ♟️" so player can clearly see turn indicator transition
             isBotThinking = false
             delay(350)
             // Then show "BOT IS THINKING... ♟️"
@@ -187,6 +222,19 @@ fun ChessGameView(
                                 soundManager.vibrateMove(settings.vibrationEnabled)
                             }
                         }
+                    }
+                    "CHESS_CLAIM_DRAW" -> {
+                        val drawType = action.payload
+                        if (drawType == "FIFTY_MOVES") {
+                            engine.claimFiftyMoveDraw()
+                        } else {
+                            engine.claimThreefoldRepetitionDraw()
+                        }
+                        gameState = engine.state
+                        selectedSquare = null
+                        pendingPromotionFromTo = null
+                        soundManager.playDraw(settings.soundEnabled)
+                        vibrate()
                     }
                     "CHESS_REMATCH" -> {
                         engine.resetGame()
@@ -358,6 +406,55 @@ fun ChessGameView(
         }
     }
 
+    fun handleClaimDraw(drawType: String) {
+        if (gameState.status.isGameOver) return
+        val claimed = if (drawType == "FIFTY_MOVES") {
+            engine.claimFiftyMoveDraw()
+        } else {
+            engine.claimThreefoldRepetitionDraw()
+        }
+        if (claimed) {
+            gameState = engine.state
+            selectedSquare = null
+            pendingPromotionFromTo = null
+            soundManager.playDraw(settings.soundEnabled)
+            vibrate()
+            if (isNearbyMode) {
+                multiplayerManager.sendAction("CHESS_CLAIM_DRAW", drawType)
+            }
+        }
+    }
+
+    fun handleUndoMove() {
+        if (gameState.status.isGameOver || isBotThinking) return
+        if (selectedMode == GameMode.SOLO) {
+            if (engine.canUndo()) {
+                engine.undoMove()
+                if (engine.state.activeColor != resolvedPlayerColor && engine.canUndo()) {
+                    engine.undoMove()
+                }
+                gameState = engine.state
+                selectedSquare = null
+                pendingPromotionFromTo = null
+                vibrate()
+            }
+        } else if (selectedMode == GameMode.LOCAL_1V1) {
+            if (engine.canUndo()) {
+                engine.undoMove()
+                gameState = engine.state
+                selectedSquare = null
+                pendingPromotionFromTo = null
+                vibrate()
+            }
+        }
+    }
+
+    val canHumanClaimDraw = !gameState.status.isGameOver && gameState.isDrawClaimable && when {
+        selectedMode == GameMode.SOLO -> gameState.activeColor == resolvedPlayerColor
+        isNearbyMode -> gameState.activeColor == localColor
+        else -> true
+    }
+
     // Determine card titles & thinking states based on resolvedPlayerColor
     val blackPlayerName: String
     val blackIsThinking: Boolean
@@ -445,8 +542,26 @@ fun ChessGameView(
                     textColor = colors.accent
                 )
 
-                // Actions: Help & Restart
+                // Actions: Undo (if available), Help & Restart
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedMode != GameMode.BLUETOOTH_1V1 && engine.canUndo() && !gameState.status.isGameOver && !isBotThinking) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surface)
+                                .border(1.5.dp, colors.border, CircleShape)
+                                .bouncyClickable(onClick = { handleUndoMove() })
+                                .testTag("chess_undo_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "↩️",
+                                fontSize = 18.sp
+                            )
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .size(44.dp)
@@ -539,8 +654,71 @@ fun ChessGameView(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 5. Bottom Status Strip
+            // 5. Draw Claim Button (when Threefold Repetition or 50-Move rule can be claimed)
+            AnimatedVisibility(
+                visible = canHumanClaimDraw,
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut()
+            ) {
+                val claimTitle = if (gameState.isThreefoldRepetitionClaimable) "CLAIM DRAW (Threefold Repetition)" else "CLAIM DRAW (50-Move Rule)"
+                val claimType = if (gameState.isThreefoldRepetitionClaimable) "THREEFOLD" else "FIFTY_MOVES"
+                ChunkyButton(
+                    text = "🤝 $claimTitle",
+                    onClick = { handleClaimDraw(claimType) },
+                    backgroundColor = PlayfulPurple,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .testTag("chess_claim_draw_button")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // 6. Bottom Status Strip
             when {
+                gameState.status is ChessGameStatus.DrawByThreefoldRepetition -> {
+                    PlayfulPill(
+                        text = "DRAW BY THREEFOLD REPETITION 🤝",
+                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                        textColor = PlayfulPurple
+                    )
+                }
+                gameState.status is ChessGameStatus.DrawByFivefoldRepetition -> {
+                    PlayfulPill(
+                        text = "DRAW BY FIVEFOLD REPETITION 🤝",
+                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                        textColor = PlayfulPurple
+                    )
+                }
+                gameState.status is ChessGameStatus.DrawByFiftyMoves -> {
+                    PlayfulPill(
+                        text = "DRAW BY 50-MOVE RULE 🤝",
+                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                        textColor = PlayfulPurple
+                    )
+                }
+                gameState.status is ChessGameStatus.DrawBySeventyFiveMoves -> {
+                    PlayfulPill(
+                        text = "DRAW BY 75-MOVE RULE 🤝",
+                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                        textColor = PlayfulPurple
+                    )
+                }
+                gameState.status is ChessGameStatus.Stalemate -> {
+                    PlayfulPill(
+                        text = "DRAW BY STALEMATE 🤝",
+                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                        textColor = PlayfulPurple
+                    )
+                }
+                gameState.status is ChessGameStatus.DrawByInsufficientMaterial -> {
+                    PlayfulPill(
+                        text = "DRAW BY INSUFFICIENT MATERIAL 🤝",
+                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                        textColor = PlayfulPurple
+                    )
+                }
                 gameState.inCheck && !gameState.status.isGameOver -> {
                     PlayfulPill(
                         text = "CHECK! ⚠️",
@@ -667,15 +845,24 @@ fun ChessGameView(
                 isCheckmate && isNearbyMode && (status as ChessGameStatus.Checkmate).winner == localColor -> "🏆 YOU WIN!"
                 isCheckmate && isNearbyMode -> "♟️ OPPONENT WINS!"
                 isCheckmate -> "🏆 ${if ((status as ChessGameStatus.Checkmate).winner == PieceColor.WHITE) "PLAYER 1" else "PLAYER 2"} WINS!"
-                status is ChessGameStatus.Stalemate -> "🤝 STALEMATE"
-                status is ChessGameStatus.DrawByFiftyMoves -> "🤝 50-MOVE DRAW"
-                else -> "🤝 DRAW (Insufficient Material)"
+                status is ChessGameStatus.DrawByThreefoldRepetition -> "Draw by Threefold Repetition"
+                status is ChessGameStatus.DrawByFivefoldRepetition -> "Draw by Fivefold Repetition"
+                status is ChessGameStatus.DrawByFiftyMoves -> "Draw by 50-Move Rule"
+                status is ChessGameStatus.DrawBySeventyFiveMoves -> "Draw by 75-Move Rule"
+                status is ChessGameStatus.Stalemate -> "Draw by Stalemate"
+                status is ChessGameStatus.DrawByInsufficientMaterial -> "Draw by Insufficient Material"
+                else -> "Draw"
             }
 
-            val subtitleText = when {
-                isCheckmate -> "Checkmate! Fantastic game."
-                status is ChessGameStatus.Stalemate -> "No legal moves left. The match is drawn."
-                else -> "Neither side has mating material. Peace on the board."
+            val subtitleText = when (status) {
+                is ChessGameStatus.Checkmate -> "Checkmate! Fantastic game."
+                is ChessGameStatus.DrawByThreefoldRepetition -> "The exact same board position occurred three times and a draw was claimed."
+                is ChessGameStatus.DrawByFivefoldRepetition -> "The exact same board position occurred five times. Game automatically drawn."
+                is ChessGameStatus.DrawByFiftyMoves -> "50 consecutive full moves without a capture or pawn advance."
+                is ChessGameStatus.DrawBySeventyFiveMoves -> "75 consecutive full moves without a capture or pawn advance."
+                is ChessGameStatus.Stalemate -> "No legal moves left and the king is not in check."
+                is ChessGameStatus.DrawByInsufficientMaterial -> "Neither side has sufficient mating material."
+                else -> "Game ended in a draw."
             }
 
             AlertDialog(

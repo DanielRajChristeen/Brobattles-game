@@ -511,18 +511,30 @@ class ChessEngineTest {
     }
 
     @Test
-    fun `fifty move rule triggers draw`() {
+    fun `fifty move rule is claimable at 100 half moves and 75-move rule terminates at 150`() {
         val board = arrayOfNulls<ChessPiece>(64)
         board[7 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.WHITE)
         board[0 * 8 + 4] = ChessPiece(PieceType.KING, PieceColor.BLACK)
+        board[7 * 8 + 0] = ChessPiece(PieceType.ROOK, PieceColor.WHITE)
+        board[0 * 8 + 0] = ChessPiece(PieceType.ROOK, PieceColor.BLACK)
         val state = ChessGameState(board = board, activeColor = PieceColor.WHITE, halfmoveClock = 99)
 
         // Quiet King move incrementing halfmoveClock to 100
         val kingMove = ChessMove(ChessSquare(7, 4), ChessSquare(7, 3))
         val next = ChessRules.applyMove(state, kingMove)
 
-        assertEquals(ChessGameStatus.DrawByFiftyMoves, next.status)
-        assertTrue(next.status.isGameOver)
+        assertTrue("50-move draw should be claimable at 100 half-moves", next.isFiftyMoveDrawClaimable)
+        val engine = ChessEngine(state)
+        assertTrue(engine.makeMove(kingMove))
+        assertTrue(engine.claimFiftyMoveDraw())
+        assertEquals(ChessGameStatus.DrawByFiftyMoves, engine.state.status)
+        assertTrue(engine.state.status.isGameOver)
+
+        // 75-move rule automatically terminates at 150 half-moves
+        val state149 = ChessGameState(board = board, activeColor = PieceColor.WHITE, halfmoveClock = 149)
+        val next150 = ChessRules.applyMove(state149, kingMove)
+        assertEquals(ChessGameStatus.DrawBySeventyFiveMoves, next150.status)
+        assertTrue(next150.status.isGameOver)
     }
 
     @Test

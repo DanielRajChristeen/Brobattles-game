@@ -40,4 +40,7 @@ data class ChessPiece(
                 PieceType.PAWN -> "♟"
             }
         }
+
+    val fenChar: Char
+        get() = if (color == PieceColor.WHITE) type.symbol[0] else type.symbol.lowercase()[0]
 }

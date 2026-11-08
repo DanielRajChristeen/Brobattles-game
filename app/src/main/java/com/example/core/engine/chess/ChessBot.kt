@@ -182,6 +182,7 @@ object ChessBot {
         state: ChessGameState,
         difficulty: ChessDifficulty
     ): ChessMove? = withContext(Dispatchers.Default) {
+        if (state.status.isGameOver) return@withContext null
         val legalMoves = ChessRules.generateLegalMoves(state)
         if (legalMoves.isEmpty()) return@withContext null
         if (legalMoves.size == 1) return@withContext legalMoves.first()
@@ -211,6 +212,7 @@ object ChessBot {
      * - Blunder Guard: Strictly ensures candidate moves do not allow opponent to capture
      *   an undefended Queen for free or force an immediate mate.
      * - Captures free material and recognizes straightforward tactical checks.
+     * - Repetition-aware: avoids repetitive cycling when winning/equal, claims/forces draw when losing.
      * - Mild humanized noise (+/- 35 cp) so inexperienced players have fun and can win.
      */
     private suspend fun decideEasyMove(state: ChessGameState, legalMoves: List<ChessMove>): ChessMove {
@@ -220,6 +222,11 @@ object ChessBot {
         for (move in legalMoves) {
             if (!currentCoroutineContext().isActive) break
             val nextState = ChessRules.applyMove(state, move, evaluateFullStatus = false)
+
+            // Check if this move leads to repetition
+            val priorCount = state.positionHistory.count { it == nextState.canonicalPositionKey }
+            val isThreefold = priorCount >= 2
+            val isTwofold = priorCount == 1
 
             // 1-ply reply check: what can the opponent do to punish this move?
             val replies = ChessRules.generateLegalMoves(nextState)
@@ -240,7 +247,17 @@ object ChessBot {
                 }
             }
 
-            scoredMoves.add(move to worstReplyScore)
+            var adjustedScore = worstReplyScore
+            if (isThreefold) {
+                // Repetition is evaluated as draw (0 cp), with small penalty if winning
+                adjustedScore = if (worstReplyScore > 60) -60 else if (worstReplyScore < -80) 0 else -30
+            } else if (isTwofold) {
+                if (worstReplyScore >= -80) {
+                    adjustedScore -= 20
+                }
+            }
+
+            scoredMoves.add(move to adjustedScore)
         }
 
         if (scoredMoves.isEmpty()) return legalMoves.first()
@@ -349,14 +366,26 @@ object ChessBot {
                 if (checkTimeAndCancellation(context)) break
 
                 val nextState = ChessRules.applyMove(state, move, evaluateFullStatus = false)
-                val score = -alphaBeta(
-                    state = nextState,
-                    depth = currentDepth - 1,
-                    alpha = -beta,
-                    beta = -alpha,
-                    ply = 1,
-                    context = context
-                )
+                val priorCount = state.positionHistory.count { it == nextState.canonicalPositionKey }
+                val isThreefold = priorCount >= 2
+
+                var score = if (isThreefold) {
+                    val evalForMe = evaluatePosition(nextState, state.activeColor)
+                    if (evalForMe > 80) -40 else if (evalForMe < -80) 0 else -25
+                } else {
+                    -alphaBeta(
+                        state = nextState,
+                        depth = currentDepth - 1,
+                        alpha = -beta,
+                        beta = -alpha,
+                        ply = 1,
+                        context = context
+                    )
+                }
+
+                if (priorCount == 1 && score > -100) {
+                    score -= 15
+                }
 
                 if (score > depthBestScore) {
                     depthBestScore = score
@@ -410,8 +439,13 @@ object ChessBot {
     ): Int {
         if (checkTimeAndCancellation(context)) return 0
 
-        // Fifty-move draw check
-        if (state.status is ChessGameStatus.DrawByFiftyMoves) {
+        // Terminal draw checks
+        if (state.status.isGameOver) {
+            return if (state.status is ChessGameStatus.Checkmate) -MATE_SCORE + ply else 0
+        }
+
+        // 50-move draw threshold
+        if (state.halfmoveClock >= 100) {
             return 0
         }
 
@@ -438,14 +472,26 @@ object ChessBot {
 
         for (move in orderedMoves) {
             val nextState = ChessRules.applyMove(state, move, evaluateFullStatus = false)
-            val score = -alphaBeta(
-                state = nextState,
-                depth = depth - 1,
-                alpha = -beta,
-                beta = -curAlpha,
-                ply = ply + 1,
-                context = context
-            )
+            val priorCount = state.positionHistory.count { it == nextState.canonicalPositionKey }
+            val isThreefold = priorCount >= 2
+
+            var score = if (isThreefold) {
+                val evalForMe = evaluatePosition(nextState, state.activeColor)
+                if (evalForMe > 80) -40 else if (evalForMe < -80) 0 else -25
+            } else {
+                -alphaBeta(
+                    state = nextState,
+                    depth = depth - 1,
+                    alpha = -beta,
+                    beta = -curAlpha,
+                    ply = ply + 1,
+                    context = context
+                )
+            }
+
+            if (priorCount == 1 && score > -100) {
+                score -= 15
+            }
 
             if (score > bestScore) {
                 bestScore = score

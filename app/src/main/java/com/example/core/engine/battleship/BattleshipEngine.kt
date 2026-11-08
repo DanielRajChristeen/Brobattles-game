@@ -1,5 +1,7 @@
 package com.example.core.engine.battleship
 
+import com.example.core.multiplayer.battleship.BattleshipAttackEvent
+
 /**
  * Authoritative game engine for classic Battleship.
  *
@@ -402,5 +404,67 @@ class BattleshipEngine {
         }
 
         return outcome
+    }
+
+    /**
+     * Applies an authoritative attack event broadcasted by the host to synchronize game state.
+     * Preserves strict fleet privacy and guarantees both devices share the exact game state.
+     */
+    fun applyAuthoritativeAttackEvent(event: BattleshipAttackEvent) {
+        val firingPlayer = event.attacker
+        val enemyPlayer = firingPlayer.opponent()
+        val radar = state.radarFor(firingPlayer)
+        val enemyFleet = state.fleetFor(enemyPlayer)
+
+        val updatedIncoming = enemyFleet.incomingShots + (event.coordinate to event.isHit)
+        val updatedEnemyFleet = enemyFleet.copy(incomingShots = updatedIncoming)
+
+        val dummyShipType = ShipType.DESTROYER
+        val updatedSunk = if (event.isSunk && radar.sunkEnemyShips.size < ShipType.ALL_SHIPS.size) {
+            radar.sunkEnemyShips + dummyShipType
+        } else {
+            radar.sunkEnemyShips
+        }
+
+        val outcome = if (event.isHit) {
+            ShotOutcome.Hit(
+                coordinate = event.coordinate,
+                shipType = dummyShipType,
+                isSunk = event.isSunk,
+                sunkShip = null
+            )
+        } else {
+            ShotOutcome.Miss(event.coordinate)
+        }
+
+        val updatedRadar = radar.copy(
+            shots = radar.shots + (event.coordinate to event.isHit),
+            sunkEnemyShips = updatedSunk,
+            lastShotOutcome = outcome
+        )
+
+        val newPhase = if (event.isGameOver) BattleshipPhase.GAME_OVER else BattleshipPhase.BATTLE
+        val winner = event.winner
+        val nextActive = event.nextActivePlayer
+
+        state = if (firingPlayer == BattleshipPlayer.PLAYER_1) {
+            state.copy(
+                p1Radar = updatedRadar,
+                p2Fleet = updatedEnemyFleet,
+                phase = newPhase,
+                activePlayer = nextActive,
+                winner = winner,
+                turnNumber = state.turnNumber + 1
+            )
+        } else {
+            state.copy(
+                p2Radar = updatedRadar,
+                p1Fleet = updatedEnemyFleet,
+                phase = newPhase,
+                activePlayer = nextActive,
+                winner = winner,
+                turnNumber = state.turnNumber + 1
+            )
+        }
     }
 }

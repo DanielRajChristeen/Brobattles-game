@@ -443,6 +443,22 @@ object ChessRules {
         // Check if next player's king is in check
         val nextInCheck = isKingInCheck(newBoard, nextColor)
 
+        // Effective en passant target: only non-null if an en passant capture is legally possible
+        val effectiveEp = getEffectiveEnPassant(newBoard, nextColor, newEnPassant)
+
+        // Canonical position key (piece placement, side to move, castling rights, and legal en passant)
+        val newKey = computeCanonicalPositionKey(
+            newBoard,
+            nextColor,
+            wKingside,
+            wQueenside,
+            bKingside,
+            bQueenside,
+            effectiveEp
+        )
+        val newPositionHistory = state.positionHistory + newKey
+        val repetitionCount = newPositionHistory.count { it == newKey }
+
         // Create temporary intermediate state to evaluate legal moves for next color
         val nextTempState = ChessGameState(
             board = newBoard,
@@ -457,23 +473,131 @@ object ChessRules {
             inCheck = nextInCheck,
             capturedByWhite = capturedByWhite,
             capturedByBlack = capturedByBlack,
-            lastMove = move
+            lastMove = move,
+            canonicalPositionKey = newKey,
+            positionHistory = newPositionHistory
         )
 
         val finalStatus = if (evaluateFullStatus) {
             val nextLegalMoves = generateLegalMoves(nextTempState)
             when {
+                // Checkmate takes precedence over 75-move draw and fivefold repetition
                 nextLegalMoves.isEmpty() && nextInCheck -> ChessGameStatus.Checkmate(winner = state.activeColor)
+                repetitionCount >= 5 -> ChessGameStatus.DrawByFivefoldRepetition
+                newHalfmove >= 150 -> ChessGameStatus.DrawBySeventyFiveMoves
                 nextLegalMoves.isEmpty() && !nextInCheck -> ChessGameStatus.Stalemate
-                newHalfmove >= 100 -> ChessGameStatus.DrawByFiftyMoves
                 isInsufficientMaterial(newBoard) -> ChessGameStatus.DrawByInsufficientMaterial
                 else -> ChessGameStatus.InProgress
             }
         } else {
-            if (newHalfmove >= 100) ChessGameStatus.DrawByFiftyMoves else ChessGameStatus.InProgress
+            when {
+                repetitionCount >= 5 -> ChessGameStatus.DrawByFivefoldRepetition
+                newHalfmove >= 150 -> ChessGameStatus.DrawBySeventyFiveMoves
+                else -> ChessGameStatus.InProgress
+            }
         }
 
         return nextTempState.copy(status = finalStatus)
+    }
+
+    /**
+     * Determines whether an en passant target square is effective under FIDE rules.
+     * An en passant square only distinguishes a position if an opposing pawn can legally
+     * execute the en passant capture on this move.
+     */
+    fun getEffectiveEnPassant(
+        board: Array<ChessPiece?>,
+        activeColor: PieceColor,
+        enPassantTarget: ChessSquare?
+    ): ChessSquare? {
+        if (enPassantTarget == null) return null
+        val epRow = enPassantTarget.row
+        val epCol = enPassantTarget.col
+
+        // The double-pushed pawn that could be captured is at pawnRow
+        val pawnRow = if (activeColor == PieceColor.WHITE) epRow + 1 else epRow - 1
+        if (pawnRow !in 0..7) return null
+
+        for (dc in intArrayOf(-1, 1)) {
+            val capC = epCol + dc
+            if (capC in 0..7) {
+                val p = board[pawnRow * 8 + capC]
+                if (p != null && p.color == activeColor && p.type == PieceType.PAWN) {
+                    val fromSquare = ChessSquare(pawnRow, capC)
+                    val clonedBoard = board.clone()
+                    clonedBoard[enPassantTarget.index] = clonedBoard[fromSquare.index]
+                    clonedBoard[fromSquare.index] = null
+                    clonedBoard[pawnRow * 8 + epCol] = null // captured pawn removed
+                    if (!isKingInCheck(clonedBoard, activeColor)) {
+                        return enPassantTarget
+                    }
+                }
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * Generates a canonical FIDE position key encompassing:
+     * 1. 64-square piece placement
+     * 2. Side to move
+     * 3. Castling availability
+     * 4. En passant target square (only when legally capturable)
+     */
+    fun computeCanonicalPositionKey(
+        board: Array<ChessPiece?>,
+        activeColor: PieceColor,
+        wKingside: Boolean,
+        wQueenside: Boolean,
+        bKingside: Boolean,
+        bQueenside: Boolean,
+        effectiveEnPassant: ChessSquare?
+    ): String {
+        val sb = StringBuilder(90)
+        // 1. Piece placement
+        for (r in 0..7) {
+            var emptyCount = 0
+            for (c in 0..7) {
+                val p = board[r * 8 + c]
+                if (p == null) {
+                    emptyCount++
+                } else {
+                    if (emptyCount > 0) {
+                        sb.append(emptyCount)
+                        emptyCount = 0
+                    }
+                    sb.append(p.fenChar)
+                }
+            }
+            if (emptyCount > 0) {
+                sb.append(emptyCount)
+            }
+            if (r < 7) sb.append('/')
+        }
+
+        // 2. Active color
+        sb.append(' ')
+        sb.append(if (activeColor == PieceColor.WHITE) 'w' else 'b')
+
+        // 3. Castling rights
+        sb.append(' ')
+        var hasCastle = false
+        if (wKingside) { sb.append('K'); hasCastle = true }
+        if (wQueenside) { sb.append('Q'); hasCastle = true }
+        if (bKingside) { sb.append('k'); hasCastle = true }
+        if (bQueenside) { sb.append('q'); hasCastle = true }
+        if (!hasCastle) sb.append('-')
+
+        // 4. Effective En Passant
+        sb.append(' ')
+        if (effectiveEnPassant != null) {
+            sb.append(effectiveEnPassant.algebraic)
+        } else {
+            sb.append('-')
+        }
+
+        return sb.toString()
     }
 
     private fun isInsufficientMaterial(board: Array<ChessPiece?>): Boolean {
