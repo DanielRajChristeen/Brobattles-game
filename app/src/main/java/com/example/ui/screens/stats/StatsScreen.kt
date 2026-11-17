@@ -26,8 +26,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -49,10 +51,7 @@ import com.example.ui.components.PlayfulPill
 import com.example.ui.components.bouncyClickable
 import com.example.ui.theme.PlayfulGreen
 import com.example.ui.theme.PlayfulOrange
-import com.example.ui.theme.PlayfulPink
-import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.PlayfulYellow
-import com.example.ui.theme.ToyboxBorder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,6 +63,7 @@ fun StatsScreen(
 ) {
     val matches by viewModel.matchHistory.collectAsState()
     val totalMatches by viewModel.totalMatchesCount.collectAsState()
+    val colors = ChillTheme.colors
 
     val p1Wins = remember(matches) {
         matches.count {
@@ -79,7 +79,7 @@ fun StatsScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(colors.background)
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
@@ -93,9 +93,9 @@ fun StatsScreen(
             Box(
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surface)
-                    .border(2.dp, ToyboxBorder, CircleShape)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(colors.surface)
+                    .border(1.dp, colors.border, RoundedCornerShape(15.dp))
                     .bouncyClickable(onClick = onBack)
                     .testTag("stats_back_button"),
                 contentAlignment = Alignment.Center
@@ -103,22 +103,22 @@ fun StatsScreen(
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back to Home",
-                    tint = MaterialTheme.colorScheme.onSurface
+                    tint = colors.primaryText
                 )
             }
             Spacer(modifier = Modifier.width(14.dp))
             Column {
                 Text(
-                    text = "Trophy Room 🏆",
-                    style = MaterialTheme.typography.titleLarge.copy(
+                    text = "Trophy Room",
+                    style = MaterialTheme.typography.headlineSmall.copy(
                         fontWeight = FontWeight.Black
                     ),
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = colors.primaryText
                 )
                 Text(
-                    text = "Scoreboard & brag rights",
+                    text = "Scoreboard & match history",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = colors.secondaryText
                 )
             }
         }
@@ -152,7 +152,7 @@ fun StatsScreen(
                         emoji = "😎",
                         label = "WIN RATE",
                         value = winRate,
-                        accentColor = PlayfulPurple,
+                        accentColor = colors.accent,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -163,48 +163,61 @@ fun StatsScreen(
                 Text(
                     text = "RECENT BATTLES",
                     style = MaterialTheme.typography.labelLarge.copy(
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 1.sp
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
                     ),
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = colors.secondaryText
                 )
             }
 
             if (matches.isEmpty()) {
                 item {
-                    Box(
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = colors.surface,
+                        shadowElevation = if (colors.isDark) 4.dp else 2.dp,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(26.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(2.dp, ToyboxBorder, RoundedCornerShape(26.dp))
-                            .padding(28.dp),
-                        contentAlignment = Alignment.Center
+                            .border(1.dp, colors.border, RoundedCornerShape(24.dp))
                     ) {
                         Column(
+                            modifier = Modifier.padding(28.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Text(text = "🎮", fontSize = 48.sp)
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(colors.accent.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.EmojiEvents,
+                                    contentDescription = null,
+                                    tint = colors.accent,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
                             Text(
                                 text = "No battles yet!",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Black
                                 ),
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = colors.primaryText
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Grab a friend or play the bot to fill your trophy shelf.",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = colors.secondaryText
                             )
                             Spacer(modifier = Modifier.height(18.dp))
                             ChunkyButton(
                                 text = "LET'S PLAY! 🚀",
                                 onClick = onBack,
-                                backgroundColor = PlayfulPurple,
+                                backgroundColor = colors.accent,
                                 modifier = Modifier.fillMaxWidth(0.85f)
                             )
                         }
@@ -227,15 +240,16 @@ private fun PlayfulStatBadge(
     accentColor: Color,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    val colors = ChillTheme.colors
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = colors.surface,
+        shadowElevation = if (colors.isDark) 4.dp else 2.dp,
         modifier = modifier
-            .clip(RoundedCornerShape(22.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(2.dp, accentColor.copy(alpha = 0.35f), RoundedCornerShape(22.dp))
-            .padding(vertical = 16.dp, horizontal = 10.dp),
-        contentAlignment = Alignment.Center
+            .border(1.5.dp, accentColor.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
     ) {
         Column(
+            modifier = Modifier.padding(vertical = 16.dp, horizontal = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -246,13 +260,13 @@ private fun PlayfulStatBadge(
                 style = MaterialTheme.typography.headlineSmall.copy(
                     fontWeight = FontWeight.Black
                 ),
-                color = MaterialTheme.colorScheme.onSurface
+                color = colors.primaryText
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Black,
+                    fontWeight = FontWeight.Bold,
                     letterSpacing = 0.5.sp
                 ),
                 color = accentColor
@@ -263,12 +277,13 @@ private fun PlayfulStatBadge(
 
 @Composable
 private fun PlayfulMatchItem(match: MatchRecord) {
+    val colors = ChillTheme.colors
     val dateStr = remember(match.timestamp) {
         SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(match.timestamp))
     }
 
     val gameDef = remember(match.gameId) { GameRegistry.getGameById(match.gameId) }
-    val accentColor = remember(gameDef) { gameDef?.let { Color(it.accentHex) } ?: PlayfulPurple }
+    val accentColor = remember(gameDef, colors.accent) { gameDef?.let { Color(it.accentHex) } ?: colors.accent }
 
     val isXo = match.gameId.equals("xo", ignoreCase = true) || match.gameTitle.contains("Tic Tac Toe", ignoreCase = true)
     val isLocal2Player = match.mode.equals("LOCAL_1V1", ignoreCase = true) ||
@@ -320,17 +335,19 @@ private fun PlayfulMatchItem(match: MatchRecord) {
         else -> PlayfulGreen
     }
 
-    Box(
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = colors.surface,
+        shadowElevation = if (colors.isDark) 3.dp else 1.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.5.dp, ToyboxBorder, RoundedCornerShape(20.dp))
-            .padding(16.dp)
+            .border(1.dp, colors.border, RoundedCornerShape(20.dp))
             .testTag("match_item_card_${match.id}")
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Left game icon badge
@@ -347,7 +364,7 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                     Image(
                         painter = painterResource(id = iconRes),
                         contentDescription = gameDef.title,
-                        contentScale = ContentScale.Crop,
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .size(36.dp)
                             .clip(RoundedCornerShape(10.dp))
@@ -425,15 +442,15 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                         "BLUE" -> Color(0xFF4285F4).copy(alpha = 0.18f)
                         else -> PlayfulGreen.copy(alpha = 0.18f)
                     }
-                    isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple.copy(alpha = 0.18f) else PlayfulOrange.copy(alpha = 0.18f)
-                    isTug && isLocal2Player -> if (isP1Winner) PlayfulOrange.copy(alpha = 0.18f) else PlayfulPurple.copy(alpha = 0.18f)
+                    isXo && isLocal2Player -> if (isP1Winner) colors.accent.copy(alpha = 0.18f) else PlayfulOrange.copy(alpha = 0.18f)
+                    isTug && isLocal2Player -> if (isP1Winner) PlayfulOrange.copy(alpha = 0.18f) else colors.accent.copy(alpha = 0.18f)
                     isLocal2Player && isP2Winner -> PlayfulOrange.copy(alpha = 0.18f)
                     isWinner -> PlayfulGreen.copy(alpha = 0.18f)
                     else -> PlayfulOrange.copy(alpha = 0.18f)
                 }
 
                 val pillTextColor = when {
-                    isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> MaterialTheme.colorScheme.onSurfaceVariant
+                    isDraw || (isXo && isLocal2Player && !isP1Winner && !isP2Winner) -> colors.secondaryText
                     isSnakes -> snakesWinnerColor
                     isLudo -> when (winnerUpper) {
                         "RED" -> Color(0xFFC62828)
@@ -442,8 +459,8 @@ private fun PlayfulMatchItem(match: MatchRecord) {
                         "BLUE" -> Color(0xFF1565C0)
                         else -> PlayfulGreen
                     }
-                    isXo && isLocal2Player -> if (isP1Winner) PlayfulPurple else PlayfulOrange
-                    isTug && isLocal2Player -> if (isP1Winner) PlayfulOrange else PlayfulPurple
+                    isXo && isLocal2Player -> if (isP1Winner) colors.accent else PlayfulOrange
+                    isTug && isLocal2Player -> if (isP1Winner) PlayfulOrange else colors.accent
                     isLocal2Player && isP2Winner -> PlayfulOrange
                     isWinner -> PlayfulGreen
                     else -> PlayfulOrange

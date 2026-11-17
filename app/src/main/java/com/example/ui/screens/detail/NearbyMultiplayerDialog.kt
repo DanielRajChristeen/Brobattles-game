@@ -58,7 +58,6 @@ import com.example.ui.components.bouncyClickable
 import com.example.core.engine.dotconnections.DotBoardSize
 import com.example.ui.theme.PlayfulGreen
 import com.example.ui.theme.PlayfulOrange
-import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.ToyboxBorder
 
 @Composable
@@ -157,13 +156,13 @@ fun NearbyMultiplayerDialog(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(CircleShape)
-                                .background(PlayfulPurple.copy(alpha = 0.15f)),
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Wifi,
                                 contentDescription = "Local Wi-Fi",
-                                tint = PlayfulPurple,
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -208,11 +207,11 @@ fun NearbyMultiplayerDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     val hostBg by animateColorAsState(
-                        targetValue = if (selectedTab == 0) PlayfulPurple else Color.Transparent,
+                        targetValue = if (selectedTab == 0) MaterialTheme.colorScheme.primary else Color.Transparent,
                         label = "hostTab"
                     )
                     val joinBg by animateColorAsState(
-                        targetValue = if (selectedTab == 1) PlayfulPurple else Color.Transparent,
+                        targetValue = if (selectedTab == 1) MaterialTheme.colorScheme.primary else Color.Transparent,
                         label = "joinTab"
                     )
 
@@ -383,8 +382,8 @@ private fun HostLobbyContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
-                .background(PlayfulPurple.copy(alpha = 0.08f))
-                .border(1.5.dp, PlayfulPurple.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
                 .padding(14.dp)
         ) {
             Column {
@@ -401,7 +400,7 @@ private fun HostLobbyContent(
                     Text(
                         text = "HOST 👑",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
-                        color = PlayfulPurple
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
@@ -494,7 +493,7 @@ private fun HostLobbyContent(
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
-                            color = PlayfulPurple
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
@@ -557,7 +556,7 @@ private fun HostMatchPreSettingsSection(
             Icon(
                 imageVector = Icons.Default.Settings,
                 contentDescription = null,
-                tint = PlayfulPurple,
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(16.dp)
             )
             Text(
@@ -591,8 +590,8 @@ private fun HostMatchPreSettingsSection(
                             .weight(1f)
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSel) PlayfulPurple.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
-                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                            .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
+                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                             .bouncyClickable { onLudoPlayerCountChange(count) }
                             .testTag("host_ludo_count_$count"),
                         contentAlignment = Alignment.Center
@@ -600,7 +599,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                            color = if (isSel) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -626,8 +625,8 @@ private fun HostMatchPreSettingsSection(
                             .weight(1f)
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSel) PlayfulPurple.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
-                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                            .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
+                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                             .bouncyClickable { onSnakesPlayerCountChange(count) }
                             .testTag("host_snakes_count_$count"),
                         contentAlignment = Alignment.Center
@@ -635,7 +634,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Black),
-                            color = if (isSel) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -665,8 +664,8 @@ private fun HostMatchPreSettingsSection(
                             .weight(1f)
                             .height(48.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSel) PlayfulPurple.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
-                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                            .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
+                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                             .bouncyClickable { onDotBoardSizeChange(size) }
                             .testTag("host_dot_size_${size.name.lowercase()}"),
                         contentAlignment = Alignment.Center
@@ -675,12 +674,12 @@ private fun HostMatchPreSettingsSection(
                             Text(
                                 text = size.title,
                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                                color = if (isSel) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                                color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = "${size.dots}×${size.dots} dots",
                                 fontSize = 9.sp,
-                                color = if (isSel) PlayfulPurple.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -707,8 +706,8 @@ private fun HostMatchPreSettingsSection(
                             .weight(1f)
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSel) PlayfulPurple.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
-                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                            .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
+                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                             .bouncyClickable { onTargetScoreChange(rounds) }
                             .testTag("host_xo_target_$rounds"),
                         contentAlignment = Alignment.Center
@@ -716,7 +715,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                            color = if (isSel) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -742,8 +741,8 @@ private fun HostMatchPreSettingsSection(
                             .weight(1f)
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSel) PlayfulPurple.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
-                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                            .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
+                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                             .bouncyClickable { onCheckersTargetChange(target) }
                             .testTag("host_checkers_target_$target"),
                         contentAlignment = Alignment.Center
@@ -751,7 +750,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                            color = if (isSel) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -781,8 +780,8 @@ private fun HostMatchPreSettingsSection(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (isWhiteSelected) PlayfulPurple.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface)
-                        .border(if (isWhiteSelected) 2.dp else 1.5.dp, if (isWhiteSelected) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                        .background(if (isWhiteSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface)
+                        .border(if (isWhiteSelected) 2.dp else 1.5.dp, if (isWhiteSelected) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                         .bouncyClickable { manager.setChessHostColor("WHITE") }
                         .padding(vertical = 8.dp, horizontal = 10.dp)
                         .testTag("chess_host_color_white"),
@@ -792,7 +791,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = "♔ WHITE ⚪",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                            color = if (isWhiteSelected) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isWhiteSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                         Text(text = "You: White • Opponent: Black", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -803,8 +802,8 @@ private fun HostMatchPreSettingsSection(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (isBlackSelected) PlayfulPurple.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface)
-                        .border(if (isBlackSelected) 2.dp else 1.5.dp, if (isBlackSelected) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                        .background(if (isBlackSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface)
+                        .border(if (isBlackSelected) 2.dp else 1.5.dp, if (isBlackSelected) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                         .bouncyClickable { manager.setChessHostColor("BLACK") }
                         .padding(vertical = 8.dp, horizontal = 10.dp)
                         .testTag("chess_host_color_black"),
@@ -814,7 +813,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = "♚ BLACK ⚫",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                            color = if (isBlackSelected) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isBlackSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                         Text(text = "You: Black • Opponent: White", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -841,8 +840,8 @@ private fun HostMatchPreSettingsSection(
                             .weight(1f)
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSel) PlayfulPurple.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
-                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                            .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
+                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                             .bouncyClickable { onTargetScoreChange(target) }
                             .testTag("host_tug_target_$target"),
                         contentAlignment = Alignment.Center
@@ -850,7 +849,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                            color = if (isSel) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -876,8 +875,8 @@ private fun HostMatchPreSettingsSection(
                             .weight(1f)
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSel) PlayfulPurple.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
-                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) PlayfulPurple else ToyboxBorder, RoundedCornerShape(12.dp))
+                            .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface)
+                            .border(if (isSel) 2.dp else 1.5.dp, if (isSel) MaterialTheme.colorScheme.primary else ToyboxBorder, RoundedCornerShape(12.dp))
                             .bouncyClickable { onBattleshipTargetChange(target) }
                             .testTag("host_battleship_target_$target"),
                         contentAlignment = Alignment.Center
@@ -885,7 +884,7 @@ private fun HostMatchPreSettingsSection(
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
-                            color = if (isSel) PlayfulPurple else MaterialTheme.colorScheme.onSurface
+                            color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -941,7 +940,7 @@ private fun JoinLobbyContent(
                 Icon(
                     imageVector = Icons.Default.Refresh,
                     contentDescription = "Refresh",
-                    tint = PlayfulPurple,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -1009,7 +1008,7 @@ private fun JoinLobbyContent(
                             Text(
                                 text = hostSettingsDesc,
                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                color = PlayfulPurple
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
                     }
@@ -1025,7 +1024,7 @@ private fun JoinLobbyContent(
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = PlayfulPurple)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "Connecting to host...",
@@ -1047,7 +1046,7 @@ private fun JoinLobbyContent(
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
                             strokeWidth = 2.dp,
-                            color = PlayfulPurple
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(

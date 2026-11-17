@@ -97,7 +97,6 @@ import com.example.ui.screens.detail.tugofwar.TugOfWarGameView
 import com.example.ui.theme.PlayfulGreen
 import com.example.ui.theme.PlayfulOrange
 import com.example.ui.theme.PlayfulPink
-import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.ToyboxBorder
 import kotlinx.coroutines.launch
 
@@ -795,7 +794,7 @@ private fun CleanLaunchView(
                         .padding(end = 14.dp)
                         .size(56.dp)
                         .clip(RoundedCornerShape(14.dp)),
-                    contentScale = ContentScale.Crop
+                    contentScale = ContentScale.Fit
                 )
             } else {
                 Text(
@@ -817,7 +816,7 @@ private fun CleanLaunchView(
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold
                     ),
-                    color = PlayfulPurple
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         }
@@ -1480,8 +1479,8 @@ private fun CleanXOPlayView(
                     GameMode.LOCAL_1V1 -> "👥 2 PLAYERS"
                     GameMode.BLUETOOTH_1V1 -> "📱📱 NEARBY"
                 },
-                backgroundColor = PlayfulPurple.copy(alpha = 0.12f),
-                textColor = PlayfulPurple
+                backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                textColor = MaterialTheme.colorScheme.primary
             )
 
             Box(
@@ -1530,7 +1529,7 @@ private fun CleanXOPlayView(
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = FontWeight.Black
                         ),
-                        color = PlayfulPurple
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Text(
                         text = "${gameState.player1Score}",
@@ -1628,7 +1627,7 @@ private fun CleanXOPlayView(
             color = when {
                 gameState.status is GameStatus.RoundWon -> PlayfulGreen
                 gameState.status is GameStatus.RoundDraw -> MaterialTheme.colorScheme.onSurfaceVariant
-                gameState.activePlayer == PlayerId.PLAYER_1 -> PlayfulPurple
+                gameState.activePlayer == PlayerId.PLAYER_1 -> MaterialTheme.colorScheme.primary
                 else -> PlayfulOrange
             }
         )
@@ -1690,17 +1689,17 @@ private fun CleanXOPlayView(
 
                             val cellBg = when {
                                 isWinningCell -> PlayfulGreen.copy(alpha = 0.22f)
-                                isSelected -> PlayfulPurple.copy(alpha = 0.22f)
-                                isValidMoveTarget -> PlayfulPurple.copy(alpha = 0.10f)
+                                isSelected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                                isValidMoveTarget -> MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                                 cellPlayer != null -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                 else -> MaterialTheme.colorScheme.background
                             }
 
                             val borderColor = when {
                                 isWinningCell -> PlayfulGreen
-                                isSelected -> PlayfulPurple
-                                isValidMoveTarget -> PlayfulPurple.copy(alpha = 0.6f)
-                                isMovementPhase && isOwnMark && canInteract -> if (cellPlayer == PlayerId.PLAYER_1) PlayfulPurple else PlayfulOrange
+                                isSelected -> MaterialTheme.colorScheme.primary
+                                isValidMoveTarget -> MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                isMovementPhase && isOwnMark && canInteract -> if (cellPlayer == PlayerId.PLAYER_1) MaterialTheme.colorScheme.primary else PlayfulOrange
                                 else -> ToyboxBorder
                             }
 
@@ -1754,7 +1753,7 @@ private fun CleanXOPlayView(
                                         modifier = Modifier
                                             .size(12.dp)
                                             .clip(CircleShape)
-                                            .background(PlayfulPurple.copy(alpha = 0.5f))
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
                                     )
                                 }
                             }
@@ -1771,7 +1770,7 @@ private fun CleanXOPlayView(
             ChunkyButton(
                 text = "NEXT ROUND (${gameState.roundNumber + 1}/${gameState.targetScore}) ⏭️",
                 onClick = onNextRound,
-                backgroundColor = PlayfulPurple,
+                backgroundColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .fillMaxWidth(0.92f)
                     .testTag("xo_next_round_button")
@@ -1835,7 +1834,7 @@ private fun CleanXOPlayView(
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Black
                         ),
-                        color = PlayfulPurple
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -1849,7 +1848,7 @@ private fun CleanXOPlayView(
                 ChunkyButton(
                     text = "REMATCH 🔄",
                     onClick = onRematch,
-                    backgroundColor = PlayfulPurple,
+                    backgroundColor = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("rematch_button")

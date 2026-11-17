@@ -5,10 +5,13 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// Playful Brand Accents (Consistent across both light and dark themes)
-val PlayfulPurple = Color(0xFF7C3AED)        // Main energetic purple
+// Brand & Game Accents
+val PlayfulPurple = Color(0xFF7C4DFF)        // Energetic electric violet
 val PlayfulPurpleLight = Color(0xFFEDE9FE)
 val PlayfulPurpleDark = Color(0xFF4C1D95)
+
+val PlayfulCyan = Color(0xFF00CFFF)          // Crisp cyan highlight
+val PlayfulCyanLight = Color(0xFFCFFAFE)
 
 val PlayfulPink = Color(0xFFEC4899)          // XO accent & celebration
 val PlayfulPinkLight = Color(0xFFFCE7F3)
@@ -30,6 +33,7 @@ val PlayfulWoodLight = Color(0xFFFEF3C7)
 
 data class AppThemeColors(
     val background: Color,
+    val secondaryBackground: Color,
     val surface: Color,
     val surfaceVariant: Color,
     val primaryText: Color,
@@ -37,6 +41,7 @@ data class AppThemeColors(
     val border: Color,
     val borderLight: Color,
     val accent: Color,
+    val secondaryAccent: Color,
     val selectedSurface: Color,
     val button: Color,
     val buttonText: Color,
@@ -46,6 +51,9 @@ data class AppThemeColors(
     val success: Color = Color(0xFF16A34A),
     val warning: Color = Color(0xFFD97706),
     val error: Color = Color(0xFFDC2626),
+    val coffeeAccent: Color = Color(0xFFD97706),
+    val coffeeContainer: Color = Color(0xFFFFFBEB),
+    val coffeeBorder: Color = Color(0xFFF59E0B),
     val isDark: Boolean,
 
     // Game Brand Accents (Preserved across both themes)
@@ -56,44 +64,54 @@ data class AppThemeColors(
 )
 
 val DarkThemeColors = AppThemeColors(
-    background = Color(0xFF0B1120),        // Deep Midnight Navy / near-black
-    surface = Color(0xFF1E293B),           // Elevated crisp dark navy card
-    surfaceVariant = Color(0xFF283548),    // Secondary dark container
-    primaryText = Color(0xFFF8FAFC),       // Crisp white
-    secondaryText = Color(0xFF94A3B8),     // Soft cool slate gray
-    border = Color(0xFF475569),            // Clear, visible slate border
-    borderLight = Color(0xFF334155),
-    accent = Color(0xFFA78BFA),            // Bright playful violet
-    selectedSurface = Color(0xFF7C3AED).copy(alpha = 0.28f),
-    button = Color(0xFF7C3AED),
+    background = Color(0xFF070B18),              // Deep midnight gaming canvas
+    secondaryBackground = Color(0xFF0D1528),     // Secondary elevated background
+    surface = Color(0xFF142238),                 // Rich navy card surface
+    surfaceVariant = Color(0xFF1B2B45),          // Inner chips & secondary containers
+    primaryText = Color(0xFFFFFFFF),             // Pure crisp white
+    secondaryText = Color(0xFFA6B4C8),           // Cool blue-gray secondary text
+    border = Color(0xFF233554),                  // Subtle blue-gray border
+    borderLight = Color(0xFF192740),             // Subtle hairline divider
+    accent = Color(0xFF7C4DFF),                  // Primary electric purple accent
+    secondaryAccent = Color(0xFF00CFFF),         // Secondary cyan accent
+    selectedSurface = Color(0xFF7C4DFF).copy(alpha = 0.22f),
+    button = Color(0xFF7C4DFF),
     buttonText = Color.White,
-    icon = Color(0xFFF8FAFC),
-    iconSecondary = Color(0xFF94A3B8),
-    shadow = Color(0x80000000),
+    icon = Color(0xFFFFFFFF),
+    iconSecondary = Color(0xFFA6B4C8),
+    shadow = Color(0x99000000),
     success = Color(0xFF22C55E),
     warning = Color(0xFFFBBF24),
-    error = Color(0xFFEF4444),
+    error = Color(0xFFF87171),
+    coffeeAccent = Color(0xFFFBBF24),
+    coffeeContainer = Color(0xFF271D12),
+    coffeeBorder = Color(0xFFF59E0B).copy(alpha = 0.50f),
     isDark = true
 )
 
 val LightThemeColors = AppThemeColors(
-    background = Color(0xFFF5F7FB),        // Clean light gaming canvas (per Phase 3 spec)
-    surface = Color(0xFFFFFFFF),           // Pure clean white card (per Phase 3 spec)
-    surfaceVariant = Color(0xFFE8EEF5),    // Subtle distinct secondary surface
-    primaryText = Color(0xFF172033),       // Deep navy / charcoal - rich contrast (per Phase 3 spec)
-    secondaryText = Color(0xFF64748B),     // Muted slate gray - readable, not pale pastel (per Phase 3 spec)
-    border = Color(0xFFDCE3EC),            // Borders and dividers (per Phase 3 spec)
-    borderLight = Color(0xFFE8EEF5),
-    accent = Color(0xFF7C3AED),            // Vibrant royal purple gaming accent
-    selectedSurface = Color(0xFF7C3AED).copy(alpha = 0.12f),
-    button = Color(0xFF7C3AED),
+    background = Color(0xFFF5F7FC),              // Clean airy light canvas
+    secondaryBackground = Color(0xFFFFFFFF),     // Crisp white secondary background
+    surface = Color(0xFFFFFFFF),                 // Pure white card surface
+    surfaceVariant = Color(0xFFEDF1FA),          // Subtle tinted container for chips/pills
+    primaryText = Color(0xFF172033),             // Deep slate-navy text
+    secondaryText = Color(0xFF64748B),           // Balanced slate gray
+    border = Color(0xFFE2E8F0),                  // Soft crisp border
+    borderLight = Color(0xFFF1F5F9),             // Hairline divider
+    accent = Color(0xFF6941C6),                  // Refined deep royal purple accent
+    secondaryAccent = Color(0xFF0891B2),         // Refined cyan-teal secondary accent
+    selectedSurface = Color(0xFF6941C6).copy(alpha = 0.10f),
+    button = Color(0xFF6941C6),
     buttonText = Color.White,
-    icon = Color(0xFF172033),              // Deep charcoal icon
+    icon = Color(0xFF172033),
     iconSecondary = Color(0xFF64748B),
-    shadow = Color(0x14172033),
+    shadow = Color(0x16172033),
     success = Color(0xFF16A34A),
     warning = Color(0xFFD97706),
     error = Color(0xFFDC2626),
+    coffeeAccent = Color(0xFFB45309),
+    coffeeContainer = Color(0xFFFFF7ED),
+    coffeeBorder = Color(0xFFD97706).copy(alpha = 0.40f),
     isDark = false
 )
 

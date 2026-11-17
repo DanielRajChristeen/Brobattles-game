@@ -12,6 +12,11 @@ object DeveloperSupportConfig {
     const val DEVELOPER_FEEDBACK_FORM_URL = "https://forms.gle/LiTDr5c58fRynA5R8"
 
     /**
+     * External Buy Me a Coffee support page URL.
+     */
+    const val BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/twomenworks"
+
+    /**
      * Official Google AdMob test Rewarded Ad Unit ID for Android.
      */
     const val TEST_REWARDED_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"

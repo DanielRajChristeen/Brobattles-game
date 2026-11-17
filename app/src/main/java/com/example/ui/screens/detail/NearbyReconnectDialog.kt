@@ -44,7 +44,6 @@ import com.example.ui.components.ChunkyButton
 import com.example.ui.theme.ChillTheme
 import com.example.ui.theme.PlayfulGreen
 import com.example.ui.theme.PlayfulOrange
-import com.example.ui.theme.PlayfulPurple
 import com.example.ui.theme.ToyboxBorder
 
 /**
@@ -134,8 +133,8 @@ fun NearbyReconnectDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
-                            .background(PlayfulPurple.copy(alpha = 0.1f))
-                            .border(1.5.dp, PlayfulPurple.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                            .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
                             .padding(vertical = 12.dp, horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -144,7 +143,7 @@ fun NearbyReconnectDialog(
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.5.dp,
-                                    color = PlayfulPurple
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
@@ -153,7 +152,7 @@ fun NearbyReconnectDialog(
                                         fontWeight = FontWeight.Black,
                                         letterSpacing = 1.sp
                                     ),
-                                    color = PlayfulPurple
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
@@ -197,7 +196,7 @@ fun NearbyReconnectDialog(
                         manager.exitLobbyFromGrace()
                         onExitToLobby()
                     },
-                    backgroundColor = PlayfulPurple,
+                    backgroundColor = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("back_to_lobby_button")
