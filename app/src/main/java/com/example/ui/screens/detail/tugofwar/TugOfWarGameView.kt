@@ -69,6 +69,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.audio.XOSoundAndHapticManager
 import com.example.core.bot.TugOfWarBotOpponent
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.GameStatus
 import com.example.core.engine.MoveResult
 import com.example.core.engine.PlayerId
@@ -103,7 +105,8 @@ fun TugOfWarGameView(
     targetScore: Int,
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
-    onExit: () -> Unit
+    onExit: () -> Unit,
+    savedSessionJson: String? = null
 ) {
     val settings by viewModel.settings.collectAsState()
     val view = LocalView.current
@@ -124,18 +127,31 @@ fun TugOfWarGameView(
         }
     }
 
-    val engine = remember { TugOfWarGameEngine(initialTargetScore = targetScore) }
+    val restoredSession = remember(savedSessionJson, selectedMode) {
+        if (selectedMode == GameMode.SOLO && savedSessionJson != null) {
+            BotGameStateSerializer.decodeTugOfWar(savedSessionJson)
+        } else null
+    }
+    val engine = remember {
+        TugOfWarGameEngine(initialTargetScore = restoredSession?.state?.targetScore ?: targetScore).apply {
+            if (restoredSession != null) {
+                restoreState(restoredSession.state)
+            }
+        }
+    }
     val bot = remember { TugOfWarBotOpponent() }
     var gameState by remember { mutableStateOf(engine.state) }
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
     val localPlayer = if (isHost) PlayerId.PLAYER_1 else PlayerId.PLAYER_2
 
-    var countdown by remember { mutableStateOf<String?>("3") }
+    val restoredRoundWon = restoredSession?.state?.status is GameStatus.RoundWon
+    var countdown by remember { mutableStateOf<String?>(if (restoredRoundWon) null else "3") }
     var showTapHint by remember { mutableStateOf(false) }
 
     // Dynamic animation states for skeletal pull cycles (0.0 to 1.0)
@@ -150,13 +166,39 @@ fun TugOfWarGameView(
     var ropeJerk by remember { mutableFloatStateOf(0f) }
 
     // Finishing celebration & falling state machine
-    var isFinishingRound by remember { mutableStateOf(false) }
-    var finishProgress by remember { mutableFloatStateOf(0f) }
+    var isFinishingRound by remember { mutableStateOf(restoredRoundWon) }
+    var finishProgress by remember { mutableFloatStateOf(if (restoredRoundWon) 1f else 0f) }
     var showResultDialog by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
     var hasPlayedOutcomeSound by remember { mutableStateOf(false) }
 
     val tapBursts = remember { mutableStateListOf<TapBurst>() }
+    var lastPersistTimeMs by remember { mutableLongStateOf(0L) }
+
+    fun persistBotState(force: Boolean = false) {
+        if (selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        if (current.status is GameStatus.MatchWon) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_TUG_OF_WAR)
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (!force && now - lastPersistTimeMs < 250L) return
+        BotGameStateSerializer.encodeTugOfWar(current)?.let { session ->
+            lastPersistTimeMs = now
+            viewModel.saveBotSession(session)
+        }
+    }
+
+    LaunchedEffect(gameState, selectedMode) {
+        if (selectedMode == GameMode.SOLO) {
+            persistBotState(force = gameState.status !is GameStatus.InProgress)
+        }
+    }
+
+    BotSaveLifecycleEffect(enabled = selectedMode == GameMode.SOLO) {
+        persistBotState(force = true)
+    }
 
     fun vibrate() {
         if (settings.vibrationEnabled) {
@@ -198,6 +240,10 @@ fun TugOfWarGameView(
 
     // Countdown and tap hint sequence
     LaunchedEffect(gameState.roundNumber) {
+        if (gameState.status !is GameStatus.InProgress) {
+            countdown = null
+            return@LaunchedEffect
+        }
         hasPlayedOutcomeSound = false
         countdown = "3"
         delay(400)
@@ -332,11 +378,46 @@ fun TugOfWarGameView(
         }
     }
 
+    // Host snapshot provider & Client rejoin state sync for Nearby Mode
+    DisposableEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "tug_of_war" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeTugOfWar(engine.state)
+            }
+        }
+        onDispose {
+            if (isHost) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && !isHost) {
+            multiplayerManager.consumePendingRejoinState("tug_of_war")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeTugOfWar(snapshot)?.let { restored ->
+                    gameState = engine.restoreState(restored)
+                    isFinishingRound = false
+                    finishProgress = 0f
+                }
+            }
+        }
+    }
+
     // Listen for incoming actions in Nearby Mode for Tug of War
     LaunchedEffect(isNearbyMode) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
+                        if (!isHost) {
+                            com.example.core.multiplayer.MultiplayerStateSnapshot.decodeTugOfWar(action.payload)?.let { restored ->
+                                gameState = engine.restoreState(restored)
+                                isFinishingRound = false
+                                finishProgress = 0f
+                            }
+                        }
+                    }
                     "TUG_PULL" -> {
                         val player = if (action.payload == "1") PlayerId.PLAYER_1 else PlayerId.PLAYER_2
                         handleTap(player, null, sendNetwork = false)
@@ -421,6 +502,9 @@ fun TugOfWarGameView(
                         finishProgress = 0f
                         showResultDialog = false
                         matchRecorded = false
+                        if (selectedMode == GameMode.SOLO) {
+                            viewModel.clearBotSession(BotGameStateSerializer.GAME_TUG_OF_WAR)
+                        }
                         vibrate()
                     }
                     .testTag("tug_restart_button"),
@@ -869,6 +953,9 @@ fun TugOfWarGameView(
                         showResultDialog = false
                         matchRecorded = false
                         hasPlayedOutcomeSound = false
+                        if (selectedMode == GameMode.SOLO) {
+                            viewModel.clearBotSession(BotGameStateSerializer.GAME_TUG_OF_WAR)
+                        }
                         vibrate()
                         if (isNearbyMode) {
                             multiplayerManager.sendAction("TUG_REMATCH", targetScore.toString())

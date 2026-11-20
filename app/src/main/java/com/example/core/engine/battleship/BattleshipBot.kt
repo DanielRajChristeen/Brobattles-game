@@ -32,6 +32,13 @@ class BattleshipBot {
         activeHits.clear()
     }
 
+    fun getActiveHits(): List<CellCoordinate> = activeHits.toList()
+
+    fun restoreActiveHits(hits: List<CellCoordinate>) {
+        activeHits.clear()
+        activeHits.addAll(hits)
+    }
+
     /**
      * Reports the outcome of a bot's shot so the AI can update its targeting memory.
      */

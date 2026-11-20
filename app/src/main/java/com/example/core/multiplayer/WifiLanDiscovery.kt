@@ -89,6 +89,7 @@ class WifiLanDiscovery(private val context: Context) {
                 setAttribute("game", session.gameId)
                 setAttribute("title", session.gameTitle)
                 setAttribute("max", session.maxPlayers.toString())
+                setAttribute("prog", if (session.isInProgress) "1" else "0")
             }
 
             registrationListener = object : NsdManager.RegistrationListener {
@@ -137,6 +138,7 @@ class WifiLanDiscovery(private val context: Context) {
                             put("port", session.port)
                             put("currentPlayers", session.currentPlayers)
                             put("maxPlayers", session.maxPlayers)
+                            put("isInProgress", session.isInProgress)
                         }.toString()
 
                         val replyBytes = replyJson.toByteArray()
@@ -209,6 +211,7 @@ class WifiLanDiscovery(private val context: Context) {
                                 val gameId = resolvedInfo.attributes["game"]?.let { String(it) } ?: "chess"
                                 val gameTitle = resolvedInfo.attributes["title"]?.let { String(it) } ?: "Game"
                                 val max = resolvedInfo.attributes["max"]?.let { String(it).toIntOrNull() } ?: 2
+                                val inProgress = resolvedInfo.attributes["prog"]?.let { String(it) == "1" } ?: false
 
                                 val session = DiscoveredSession(
                                     sessionId = sid,
@@ -218,7 +221,8 @@ class WifiLanDiscovery(private val context: Context) {
                                     hostIp = host,
                                     port = port,
                                     currentPlayers = 1,
-                                    maxPlayers = max
+                                    maxPlayers = max,
+                                    isInProgress = inProgress
                                 )
                                 onSessionDiscovered(session)
                             }
@@ -274,7 +278,8 @@ class WifiLanDiscovery(private val context: Context) {
                                 hostIp = packet.address.hostAddress ?: "127.0.0.1",
                                 port = json.getInt("port"),
                                 currentPlayers = json.optInt("currentPlayers", 1),
-                                maxPlayers = json.optInt("maxPlayers", 2)
+                                maxPlayers = json.optInt("maxPlayers", 2),
+                                isInProgress = json.optBoolean("isInProgress", false)
                             )
                             onSessionDiscovered(session)
                             Log.d(TAG, "Discovered session via UDP from ${packet.address.hostAddress}")

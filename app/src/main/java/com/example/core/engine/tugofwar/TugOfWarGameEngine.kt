@@ -55,6 +55,11 @@ class TugOfWarGameEngine(
         return initializeGame(targetScore)
     }
 
+    fun restoreState(savedState: TugOfWarState): TugOfWarState {
+        _state = savedState
+        return _state
+    }
+
     override fun validateMove(move: TugOfWarMove, player: PlayerId): Boolean {
         return _state.status is GameStatus.InProgress
     }

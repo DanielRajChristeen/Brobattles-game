@@ -5,8 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.data.db.AppDatabase
 import com.example.core.data.model.MatchRecord
+import com.example.core.data.model.SavedGameSession
 import com.example.core.data.model.UserSettings
 import com.example.core.data.repository.GameRepository
+import com.example.core.data.save.BotGameSaveManager
 import com.example.core.multiplayer.LocalWifiMultiplayerManager
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +19,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getInstance(application)
     val repository = GameRepository(database.matchRecordDao(), database.userSettingsDao())
+    val botSaveManager = BotGameSaveManager(database.savedGameSessionDao(), viewModelScope)
     val multiplayerManager = LocalWifiMultiplayerManager(application, viewModelScope)
 
     val settings: StateFlow<UserSettings> = repository.userSettings.stateIn(
@@ -37,12 +40,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = 0
     )
 
+    val savedBotSessions: StateFlow<Map<String, SavedGameSession>> =
+        botSaveManager.observeAllValidSessions().stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
+
     init {
         viewModelScope.launch {
             settings.collect { currentSettings ->
                 multiplayerManager.customUsername = currentSettings.username
             }
         }
+    }
+
+    fun saveBotSession(session: SavedGameSession) {
+        botSaveManager.saveSessionAsync(session)
+    }
+
+    fun clearBotSession(gameId: String) {
+        botSaveManager.clearSessionAsync(gameId)
     }
 
     fun setUsername(newUsername: String): kotlinx.coroutines.Job? {

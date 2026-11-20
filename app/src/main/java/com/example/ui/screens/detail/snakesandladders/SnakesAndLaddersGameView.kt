@@ -64,6 +64,8 @@ import androidx.compose.ui.unit.sp
 import com.example.core.audio.SnakesAndLaddersSoundManager
 import com.example.core.audio.SnakesAndLaddersSoundManager.SnakesOutcomeAudio
 import com.example.core.bot.SnakesAndLaddersBotOpponent
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.GameStatus
 import com.example.core.engine.PlayerId
 import com.example.core.engine.snakesandladders.SnakesAndLaddersBoard
@@ -99,7 +101,8 @@ fun SnakesAndLaddersGameView(
     playerCount: Int = 2,
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
-    onExit: () -> Unit
+    onExit: () -> Unit,
+    savedSessionJson: String? = null
 ) {
     val settings by viewModel.settings.collectAsState()
     val view = LocalView.current
@@ -114,7 +117,18 @@ fun SnakesAndLaddersGameView(
 
     val activePlayerCount = if (selectedMode == GameMode.SOLO) 2 else playerCount.coerceIn(2, 5)
 
-    val engine = remember { SnakesAndLaddersGameEngine(initialTargetScore = 1, initialPlayerCount = activePlayerCount) }
+    val restoredSession = remember(savedSessionJson, selectedMode) {
+        if (selectedMode == GameMode.SOLO && savedSessionJson != null) {
+            BotGameStateSerializer.decodeSnakes(savedSessionJson)
+        } else null
+    }
+    val engine = remember {
+        SnakesAndLaddersGameEngine(initialTargetScore = 1, initialPlayerCount = activePlayerCount).apply {
+            if (restoredSession != null) {
+                syncState(restoredSession.state)
+            }
+        }
+    }
     val bot = remember { SnakesAndLaddersBotOpponent() }
     var gameState by remember { mutableStateOf(engine.state) }
 
@@ -127,13 +141,14 @@ fun SnakesAndLaddersGameView(
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
     val localPlayer = if (isHost) PlayerId.PLAYER_1 else PlayerId.PLAYER_2
 
     // Dice & Animation States
-    var displayedDice by remember { mutableIntStateOf(1) }
+    var displayedDice by remember { mutableIntStateOf(restoredSession?.displayedDice ?: 1) }
     var isRolling by remember { mutableStateOf(false) }
     var isMoving by remember { mutableStateOf(false) }
     var actionBanner by remember { mutableStateOf<String?>(null) }
@@ -147,7 +162,11 @@ fun SnakesAndLaddersGameView(
 
     // Visual Screen Coordinates & State for all active players
     val playerSquares = remember(activePlayerCount) {
-        mutableStateListOf<Int>().apply { repeat(activePlayerCount) { add(1) } }
+        mutableStateListOf<Int>().apply {
+            for (i in 0 until activePlayerCount) {
+                add(restoredSession?.state?.playerPositions?.getOrElse(i) { 1 } ?: 1)
+            }
+        }
     }
     val playerCoords = remember(activePlayerCount) {
         mutableStateListOf<Offset?>().apply { repeat(activePlayerCount) { add(null) } }
@@ -157,6 +176,26 @@ fun SnakesAndLaddersGameView(
     }
     val playerLimbPhases = remember(activePlayerCount) {
         mutableStateListOf<Float>().apply { repeat(activePlayerCount) { add(0f) } }
+    }
+
+    fun persistBotState() {
+        if (selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        if (current.status is GameStatus.MatchWon) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_SNAKES)
+        } else {
+            BotGameStateSerializer.encodeSnakes(current, displayedDice)?.let {
+                viewModel.saveBotSession(it)
+            }
+        }
+    }
+
+    LaunchedEffect(gameState, displayedDice, selectedMode) {
+        persistBotState()
+    }
+
+    BotSaveLifecycleEffect(enabled = selectedMode == GameMode.SOLO) {
+        persistBotState()
     }
 
     // Snake Wiggle Animation
@@ -399,11 +438,56 @@ fun SnakesAndLaddersGameView(
         }
     }
 
+    fun applySyncedSnakesState(synced: com.example.core.engine.snakesandladders.SnakesAndLaddersState) {
+        engine.syncState(synced)
+        gameState = synced
+        synced.lastDiceRoll?.let { displayedDice = it }
+        for (i in 0 until minOf(activePlayerCount, synced.playerPositions.size)) {
+            if (i < playerSquares.size) playerSquares[i] = synced.playerPositions[i]
+            if (i < playerCoords.size && boardPixelSize > 0f) {
+                playerCoords[i] = getCellOffset(synced.playerPositions[i])
+            }
+            if (i < playerPoses.size) playerPoses[i] = TokenPose.IDLE
+        }
+        isRolling = false
+        isMoving = false
+    }
+
+    DisposableEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "snakes_and_ladders" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeSnakes(engine.state)
+            }
+        }
+        onDispose {
+            if (isHost) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && !isHost) {
+            multiplayerManager.consumePendingRejoinState("snakes_and_ladders")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeSnakes(snapshot)?.let { synced ->
+                    applySyncedSnakesState(synced)
+                }
+            }
+        }
+    }
+
     // Listen for incoming actions in Nearby Mode for Snakes and Ladders
     LaunchedEffect(isNearbyMode) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
+                        if (!isHost) {
+                            com.example.core.multiplayer.MultiplayerStateSnapshot.decodeSnakes(action.payload)?.let { synced ->
+                                applySyncedSnakesState(synced)
+                            }
+                        }
+                    }
                     "SNAKES_ROLL" -> {
                         val rollResult = action.payload.toIntOrNull() ?: return@collect
                         val remotePlayer = if (isHost) PlayerId.PLAYER_2 else PlayerId.PLAYER_1
@@ -543,6 +627,9 @@ fun SnakesAndLaddersGameView(
                             matchRecorded = false
                             hasPlayedOutcomeAudio = false
                             soundManager.stopAllSounds()
+                            if (selectedMode == GameMode.SOLO) {
+                                viewModel.clearBotSession(BotGameStateSerializer.GAME_SNAKES)
+                            }
                             vibrate()
                         }
                         .testTag("snakes_restart_button"),
@@ -836,6 +923,9 @@ fun SnakesAndLaddersGameView(
                         matchRecorded = false
                         hasPlayedOutcomeAudio = false
                         soundManager.stopAllSounds()
+                        if (selectedMode == GameMode.SOLO) {
+                            viewModel.clearBotSession(BotGameStateSerializer.GAME_SNAKES)
+                        }
                         vibrate()
                         if (isNearbyMode) {
                             multiplayerManager.sendAction("SNAKES_REMATCH", "")

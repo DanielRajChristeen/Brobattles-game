@@ -11,7 +11,8 @@ data class DiscoveredSession(
     val hostIp: String,
     val port: Int,
     val currentPlayers: Int = 1,
-    val maxPlayers: Int = 2
+    val maxPlayers: Int = 2,
+    val isInProgress: Boolean = false
 )
 
 /**
@@ -76,3 +77,23 @@ data class GameStartInfo(
     val isHost: Boolean,
     val configPayload: String = ""
 )
+
+/**
+ * Represents a disconnected original match participant requesting to rejoin an active room.
+ */
+data class RejoinRequest(
+    val playerId: String,
+    val playerName: String,
+    val role: String,
+    val requestedAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * Client-side status of an active rejoin request sent to the host.
+ */
+sealed class RejoinRequestStatus {
+    object Idle : RejoinRequestStatus()
+    data class Pending(val session: DiscoveredSession) : RejoinRequestStatus()
+    data class Accepted(val session: DiscoveredSession) : RejoinRequestStatus()
+    data class Rejected(val reason: String) : RejoinRequestStatus()
+}

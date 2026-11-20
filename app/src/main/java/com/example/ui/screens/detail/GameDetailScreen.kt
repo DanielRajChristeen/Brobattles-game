@@ -36,6 +36,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -67,6 +68,9 @@ import androidx.compose.ui.unit.sp
 import com.example.core.audio.XOSoundAndHapticManager
 import com.example.core.bot.BotDifficulty
 import com.example.core.bot.XOBotOpponent
+import com.example.core.data.model.SavedGameSession
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.GameStatus
 import com.example.core.engine.MoveResult
 import com.example.core.engine.PlayerId
@@ -130,14 +134,19 @@ fun GameDetailScreen(
     var snakesPlayerCount by rememberSaveable { mutableIntStateOf(2) }
     var targetScore by remember { mutableIntStateOf(game.defaultTargetScore) }
     var isPlaying by rememberSaveable { mutableStateOf(false) }
+    var resumeSessionJson by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val savedBotSessions by viewModel.savedBotSessions.collectAsState()
+    val savedSession = savedBotSessions[game.id.lowercase()]
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     var showNearbyDialog by remember { mutableStateOf(false) }
 
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
     val localPlayerId = if (isHost) PlayerId.PLAYER_1 else PlayerId.PLAYER_2
 
     val isXoGame = game.id.equals("xo", ignoreCase = true)
@@ -155,22 +164,48 @@ fun GameDetailScreen(
         }
     }
 
-    BackHandler(enabled = true) {
-        if (isPlaying) {
-            xoSoundManager.stopAll()
-            isPlaying = false
-            multiplayerManager.disconnect()
-        } else {
-            onBack()
-        }
-    }
-
     // XO Engine and Bot
     val engine = remember { XOGameEngine(initialTargetScore = targetScore) }
     val bot = remember(xoDifficulty) { XOBotOpponent(difficulty = xoDifficulty) }
     var gameState by remember { mutableStateOf(engine.state) }
     var isBotThinking by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
+
+    fun persistXOBotState() {
+        if (!isPlaying || !isXoGame || selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        if (current.status is GameStatus.MatchWon) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_XO)
+        } else {
+            BotGameStateSerializer.encodeXO(current, xoDifficulty)?.let {
+                viewModel.saveBotSession(it)
+            }
+        }
+    }
+
+    LaunchedEffect(isPlaying, isXoGame, selectedMode, gameState, xoDifficulty) {
+        if (isPlaying && isXoGame && selectedMode == GameMode.SOLO) {
+            persistXOBotState()
+        }
+    }
+
+    BotSaveLifecycleEffect(enabled = isPlaying && isXoGame && selectedMode == GameMode.SOLO) {
+        persistXOBotState()
+    }
+
+    BackHandler(enabled = true) {
+        if (isPlaying) {
+            if (isXoGame && selectedMode == GameMode.SOLO) {
+                persistXOBotState()
+            }
+            xoSoundManager.stopAll()
+            resumeSessionJson = null
+            isPlaying = false
+            multiplayerManager.disconnect()
+        } else {
+            onBack()
+        }
+    }
 
     var lastObservedBoard by remember { mutableStateOf<List<PlayerId?>?>(null) }
     var lastProcessedOutcomeKey by remember { mutableStateOf<String?>(null) }
@@ -254,12 +289,122 @@ fun GameDetailScreen(
         }
     }
 
-    fun startPlaying() {
+    fun startPlaying(clearExistingBotSave: Boolean = true) {
+        if (selectedMode == GameMode.SOLO && clearExistingBotSave) {
+            viewModel.clearBotSession(game.id.lowercase())
+        }
+        resumeSessionJson = null
         engine.initializeGame(targetScore = targetScore)
         gameState = engine.state
         matchRecorded = false
         isPlaying = true
         vibrate()
+    }
+
+    fun continueSavedGame(session: SavedGameSession) {
+        val id = game.id.lowercase()
+        var restoredOk = false
+        when (id) {
+            BotGameStateSerializer.GAME_XO -> {
+                val decoded = BotGameStateSerializer.decodeXO(session.payloadJson)
+                if (decoded != null) {
+                    xoDifficulty = decoded.difficulty
+                    targetScore = decoded.state.targetScore
+                    engine.syncState(decoded.state)
+                    gameState = engine.state
+                    matchRecorded = false
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+            BotGameStateSerializer.GAME_TUG_OF_WAR -> {
+                val decoded = BotGameStateSerializer.decodeTugOfWar(session.payloadJson)
+                if (decoded != null) {
+                    targetScore = decoded.state.targetScore
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+            BotGameStateSerializer.GAME_SNAKES -> {
+                val decoded = BotGameStateSerializer.decodeSnakes(session.payloadJson)
+                if (decoded != null) {
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+            BotGameStateSerializer.GAME_CHESS -> {
+                val decoded = BotGameStateSerializer.decodeChess(session.payloadJson)
+                if (decoded != null) {
+                    chessDifficulty = decoded.difficulty
+                    chessPlayerColor = decoded.playerColorPreference
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+            BotGameStateSerializer.GAME_CHECKERS -> {
+                val decoded = BotGameStateSerializer.decodeCheckers(session.payloadJson)
+                if (decoded != null) {
+                    checkersDifficulty = decoded.difficulty
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+            BotGameStateSerializer.GAME_DOT_CONNECTIONS -> {
+                val decoded = BotGameStateSerializer.decodeDotConnections(session.payloadJson)
+                if (decoded != null) {
+                    dotDifficulty = decoded.difficulty
+                    dotBoardSize = decoded.state.boardSize
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+            BotGameStateSerializer.GAME_LUDO -> {
+                val decoded = BotGameStateSerializer.decodeLudo(session.payloadJson)
+                if (decoded != null) {
+                    ludoBotDifficulty = decoded.botDifficulty
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+            BotGameStateSerializer.GAME_BATTLESHIP -> {
+                val decoded = BotGameStateSerializer.decodeBattleship(session.payloadJson)
+                if (decoded != null) {
+                    resumeSessionJson = session.payloadJson
+                    restoredOk = true
+                }
+            }
+        }
+
+        if (restoredOk) {
+            selectedMode = GameMode.SOLO
+            isPlaying = true
+            vibrate()
+        } else {
+            viewModel.clearBotSession(id)
+            startPlaying(clearExistingBotSave = true)
+        }
+    }
+
+    // Resume XO bot turn cleanly if a saved session was resumed on Bot's turn
+    LaunchedEffect(isPlaying, isXoGame, selectedMode, gameState.activePlayer, gameState.status) {
+        if (isPlaying &&
+            isXoGame &&
+            selectedMode == GameMode.SOLO &&
+            gameState.status is GameStatus.InProgress &&
+            gameState.activePlayer == PlayerId.PLAYER_2 &&
+            !isBotThinking
+        ) {
+            isBotThinking = true
+            val botMove = bot.decideMove(gameState, PlayerId.PLAYER_2)
+            if (botMove != null) {
+                val botResult = engine.makeMove(botMove, PlayerId.PLAYER_2)
+                if (botResult is MoveResult.Success) {
+                    gameState = botResult.newState
+                    vibrate()
+                }
+            }
+            isBotThinking = false
+        }
     }
 
     // Listen for game start event in Nearby Multiplayer
@@ -295,7 +440,9 @@ fun GameDetailScreen(
                 }
                 showNearbyDialog = false
                 selectedMode = GameMode.BLUETOOTH_1V1
-                startPlaying()
+                if (!isPlaying) {
+                    startPlaying()
+                }
             }
         }
     }
@@ -362,6 +509,31 @@ fun GameDetailScreen(
         }
     }
 
+    // Register Host XO live-state snapshot provider & consume any pending rejoin snapshot
+    DisposableEffect(isPlaying, isNearbyMode, isHost, isXoGame) {
+        if (isPlaying && isNearbyMode && isHost && isXoGame) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "xo" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeXO(engine.state)
+            }
+        }
+        onDispose {
+            if (isHost && isXoGame) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isPlaying, isNearbyMode, isHost, isXoGame) {
+        if (isPlaying && isNearbyMode && !isHost && isXoGame) {
+            multiplayerManager.consumePendingRejoinState("xo")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeXO(snapshot)?.let { syncedState ->
+                    engine.syncState(syncedState)
+                    gameState = syncedState
+                }
+            }
+        }
+    }
+
     // Listen for incoming actions in Nearby Mode for Tic Tac Toe
     LaunchedEffect(isPlaying, isNearbyMode) {
         if (isPlaying && isNearbyMode) {
@@ -409,7 +581,8 @@ fun GameDetailScreen(
                             }
                         }
                     }
-                    "XO_SYNC" -> {
+                    "XO_SYNC",
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
                         val syncedState = deserializeXOState(action.payload)
                         if (syncedState != null) {
                             engine.syncState(syncedState)
@@ -500,12 +673,26 @@ fun GameDetailScreen(
                 onSnakesPlayerCountSelected = { snakesPlayerCount = it },
                 targetScore = targetScore,
                 onTargetScoreSelected = { targetScore = it },
+                savedSession = savedSession,
+                onContinue = {
+                    val existing = savedSession
+                    if (existing != null) {
+                        continueSavedGame(existing)
+                    } else {
+                        startPlaying()
+                    }
+                },
+                onDiscardSave = {
+                    viewModel.clearBotSession(game.id.lowercase())
+                    resumeSessionJson = null
+                    vibrate()
+                },
                 onBack = onBack,
                 onPlay = {
                     if (selectedMode == GameMode.BLUETOOTH_1V1) {
                         showNearbyDialog = true
                     } else {
-                        startPlaying()
+                        startPlaying(clearExistingBotSave = true)
                     }
                 }
             )
@@ -517,13 +704,16 @@ fun GameDetailScreen(
                         difficulty = checkersDifficulty,
                         viewModel = viewModel,
                         onChangeMode = {
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
-                        }
+                        },
+                        savedSessionJson = resumeSessionJson
                     )
                 }
                 game.id.equals("ludo", ignoreCase = true) -> {
@@ -533,13 +723,16 @@ fun GameDetailScreen(
                         botDifficulty = ludoBotDifficulty,
                         viewModel = viewModel,
                         onChangeMode = {
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
-                        }
+                        },
+                        savedSessionJson = resumeSessionJson
                     )
                 }
                 game.id.equals("dot_connections", ignoreCase = true) -> {
@@ -549,13 +742,16 @@ fun GameDetailScreen(
                         boardSize = dotBoardSize,
                         viewModel = viewModel,
                         onChangeMode = {
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
-                        }
+                        },
+                        savedSessionJson = resumeSessionJson
                     )
                 }
                 game.id.equals("chess", ignoreCase = true) -> {
@@ -565,13 +761,16 @@ fun GameDetailScreen(
                         playerColorPreference = chessPlayerColor,
                         viewModel = viewModel,
                         onChangeMode = {
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
-                        }
+                        },
+                        savedSessionJson = resumeSessionJson
                     )
                 }
                 game.id.equals("tug_of_war", ignoreCase = true) -> {
@@ -580,13 +779,16 @@ fun GameDetailScreen(
                         targetScore = targetScore,
                         viewModel = viewModel,
                         onChangeMode = {
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
-                        }
+                        },
+                        savedSessionJson = resumeSessionJson
                     )
                 }
                 game.id.equals("snakes_and_ladders", ignoreCase = true) -> {
@@ -596,13 +798,16 @@ fun GameDetailScreen(
                         playerCount = snakesPlayerCount,
                         viewModel = viewModel,
                         onChangeMode = {
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
-                        }
+                        },
+                        savedSessionJson = resumeSessionJson
                     )
                 }
                 game.id.equals("battleship", ignoreCase = true) -> {
@@ -610,13 +815,16 @@ fun GameDetailScreen(
                         selectedMode = selectedMode,
                         viewModel = viewModel,
                         onChangeMode = {
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
-                        }
+                        },
+                        savedSessionJson = resumeSessionJson
                     )
                 }
                 else -> {
@@ -673,16 +881,27 @@ fun GameDetailScreen(
                                 engine.resetGame(targetScore)
                                 gameState = engine.state
                                 matchRecorded = false
+                                if (selectedMode == GameMode.SOLO) {
+                                    viewModel.clearBotSession(BotGameStateSerializer.GAME_XO)
+                                }
                                 vibrate()
                             }
                         },
                         onChangeMode = {
+                            if (selectedMode == GameMode.SOLO) {
+                                persistXOBotState()
+                            }
                             xoSoundManager.stopAll()
+                            resumeSessionJson = null
                             isPlaying = false
                             multiplayerManager.disconnect()
                         },
                         onExit = {
+                            if (selectedMode == GameMode.SOLO) {
+                                persistXOBotState()
+                            }
                             xoSoundManager.stopAll()
+                            resumeSessionJson = null
                             multiplayerManager.disconnect()
                             onBack()
                         }
@@ -704,7 +923,9 @@ fun GameDetailScreen(
                 onDismiss = { showNearbyDialog = false },
                 onGameStarted = {
                     showNearbyDialog = false
-                    startPlaying()
+                    if (!isPlaying) {
+                        startPlaying()
+                    }
                 }
             )
         }
@@ -747,6 +968,9 @@ private fun CleanLaunchView(
     onSnakesPlayerCountSelected: (Int) -> Unit = {},
     targetScore: Int,
     onTargetScoreSelected: (Int) -> Unit,
+    savedSession: SavedGameSession? = null,
+    onContinue: () -> Unit = {},
+    onDiscardSave: () -> Unit = {},
     onBack: () -> Unit,
     onPlay: () -> Unit
 ) {
@@ -1402,18 +1626,100 @@ private fun CleanLaunchView(
 
         Spacer(modifier = Modifier.height(36.dp))
 
-        // Chunky Instant Play Button
-        val playButtonText = when {
-            game.id.equals("chess", ignoreCase = true) -> "PLAY ♟️"
-            game.id.equals("battleship", ignoreCase = true) -> "PLAY 🚢"
-            else -> "PLAY 🎮"
+        if (selectedMode == GameMode.SOLO && savedSession != null) {
+            // Compact Saved Session Summary + Discard action
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(accentColor.copy(alpha = 0.10f))
+                    .border(1.5.dp, accentColor.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .testTag("saved_session_banner"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "SAVED MATCH READY",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.8.sp
+                        ),
+                        color = accentColor
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = savedSession.summary,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, ToyboxBorder, CircleShape)
+                        .bouncyClickable(onClick = onDiscardSave)
+                        .testTag("discard_save_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Discard Saved Match",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            ChunkyButton(
+                text = "CONTINUE GAME ▶️",
+                onClick = onContinue,
+                backgroundColor = accentColor,
+                testTag = "continue_game_button"
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(2.dp, accentColor.copy(alpha = 0.65f), RoundedCornerShape(18.dp))
+                    .bouncyClickable(onClick = onPlay)
+                    .testTag("new_game_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "NEW GAME",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.8.sp
+                    ),
+                    color = accentColor
+                )
+            }
+        } else {
+            // Chunky Instant Play Button (exact existing flow when no saved Vs Bot session exists)
+            val playButtonText = when {
+                game.id.equals("chess", ignoreCase = true) -> "PLAY ♟️"
+                game.id.equals("battleship", ignoreCase = true) -> "PLAY 🚢"
+                else -> "PLAY 🎮"
+            }
+            ChunkyButton(
+                text = playButtonText,
+                onClick = onPlay,
+                backgroundColor = accentColor,
+                testTag = "start_game_button"
+            )
         }
-        ChunkyButton(
-            text = playButtonText,
-            onClick = onPlay,
-            backgroundColor = accentColor,
-            testTag = "start_game_button"
-        )
     }
 }
 

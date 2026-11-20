@@ -3,6 +3,7 @@ package com.example.ui.screens.detail.chess
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -27,11 +28,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,12 +52,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.audio.ChessSoundManager
 import com.example.core.audio.ChessSoundManager.MatchOutcomeAudio
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.chess.ChessBoardOrientation
 import com.example.core.engine.chess.ChessDifficulty
 import com.example.core.engine.chess.ChessEngine
@@ -85,7 +97,8 @@ fun ChessGameView(
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
     onExit: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    savedSessionJson: String? = null
 ) {
     val view = LocalView.current
     val context = LocalContext.current
@@ -106,13 +119,25 @@ fun ChessGameView(
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
     val chessHostColor by multiplayerManager.chessHostColor.collectAsState()
     val (localColor, opponentColor) = ChessBoardOrientation.resolveNearbyColors(chessHostColor, isHost)
 
-    val engine = remember { ChessEngine() }
+    val restoredSession = remember(savedSessionJson, selectedMode) {
+        if (selectedMode == GameMode.SOLO && savedSessionJson != null) {
+            BotGameStateSerializer.decodeChess(savedSessionJson)
+        } else null
+    }
+    val engine = remember {
+        ChessEngine().apply {
+            if (restoredSession != null) {
+                restoreState(restoredSession.state, restoredSession.moveHistory)
+            }
+        }
+    }
     var gameState by remember { mutableStateOf(engine.state) }
     var selectedSquare by remember { mutableStateOf<ChessSquare?>(null) }
     var isBotThinking by remember { mutableStateOf(false) }
@@ -121,11 +146,41 @@ fun ChessGameView(
     var gameSessionId by remember { mutableStateOf(0) }
 
     // Resolved color for this specific match (remains fixed during entire match)
-    var resolvedPlayerColor by remember(playerColorPreference) { mutableStateOf(playerColorPreference.resolve()) }
+    var resolvedPlayerColor by remember(playerColorPreference, restoredSession) {
+        mutableStateOf(restoredSession?.resolvedPlayerColor ?: playerColorPreference.resolve())
+    }
 
     // Promotion dialog state
     var pendingPromotionFromTo by remember { mutableStateOf<Pair<ChessSquare, ChessSquare>?>(null) }
     var showHelpDialog by remember { mutableStateOf(false) }
+
+    // Same-device 2-player auto-flip board toggle (ON by default)
+    var autoFlipBoard by rememberSaveable { mutableStateOf(true) }
+
+    fun persistBotState() {
+        if (selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        val history = engine.getMoveHistory()
+        if (current.status.isGameOver || !BotGameStateSerializer.hasResumableChessProgress(current, history)) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_CHESS)
+        } else {
+            BotGameStateSerializer.encodeChess(
+                state = current,
+                difficulty = difficulty,
+                playerColorPreference = playerColorPreference,
+                resolvedPlayerColor = resolvedPlayerColor,
+                moveHistory = history
+            )?.let { viewModel.saveBotSession(it) }
+        }
+    }
+
+    LaunchedEffect(gameState, resolvedPlayerColor, selectedMode) {
+        persistBotState()
+    }
+
+    BotSaveLifecycleEffect(enabled = selectedMode == GameMode.SOLO) {
+        persistBotState()
+    }
 
     fun vibrate() {
         if (settings.vibrationEnabled) {
@@ -198,11 +253,47 @@ fun ChessGameView(
         }
     }
 
+    DisposableEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "chess" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeChess(engine.state, engine.getMoveHistory())
+            }
+        }
+        onDispose {
+            if (isHost) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && !isHost) {
+            multiplayerManager.consumePendingRejoinState("chess")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeChess(snapshot)?.let { restored ->
+                    engine.restoreState(restored.state, restored.moveHistory)
+                    gameState = engine.state
+                    selectedSquare = null
+                    pendingPromotionFromTo = null
+                }
+            }
+        }
+    }
+
     // Listen for incoming actions in Nearby Mode for Chess
     LaunchedEffect(isNearbyMode) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
+                        if (!isHost) {
+                            com.example.core.multiplayer.MultiplayerStateSnapshot.decodeChess(action.payload)?.let { restored ->
+                                engine.restoreState(restored.state, restored.moveHistory)
+                                gameState = engine.state
+                                selectedSquare = null
+                                pendingPromotionFromTo = null
+                            }
+                        }
+                    }
                     "CHESS_MOVE" -> {
                         val parts = action.payload.split(",")
                         if (parts.size >= 4) {
@@ -400,6 +491,9 @@ fun ChessGameView(
         matchRecorded = false
         hasPlayedOutcomeAudio = false
         gameSessionId++
+        if (selectedMode == GameMode.SOLO) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_CHESS)
+        }
         vibrate()
         if (isNearbyMode) {
             multiplayerManager.sendAction("CHESS_REMATCH", "")
@@ -604,7 +698,8 @@ fun ChessGameView(
                 selectedMode = selectedMode,
                 activeColor = gameState.activeColor,
                 localColor = localColor,
-                humanPlayerColor = resolvedPlayerColor
+                humanPlayerColor = resolvedPlayerColor,
+                autoFlipLocalBoard = autoFlipBoard
             )
 
             // 2. Top Player HUD (Opponent)
@@ -675,107 +770,172 @@ fun ChessGameView(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // 6. Bottom Status Strip
-            when {
-                gameState.status is ChessGameStatus.DrawByThreefoldRepetition -> {
-                    PlayfulPill(
-                        text = "DRAW BY THREEFOLD REPETITION 🤝",
-                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
-                        textColor = PlayfulPurple
-                    )
-                }
-                gameState.status is ChessGameStatus.DrawByFivefoldRepetition -> {
-                    PlayfulPill(
-                        text = "DRAW BY FIVEFOLD REPETITION 🤝",
-                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
-                        textColor = PlayfulPurple
-                    )
-                }
-                gameState.status is ChessGameStatus.DrawByFiftyMoves -> {
-                    PlayfulPill(
-                        text = "DRAW BY 50-MOVE RULE 🤝",
-                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
-                        textColor = PlayfulPurple
-                    )
-                }
-                gameState.status is ChessGameStatus.DrawBySeventyFiveMoves -> {
-                    PlayfulPill(
-                        text = "DRAW BY 75-MOVE RULE 🤝",
-                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
-                        textColor = PlayfulPurple
-                    )
-                }
-                gameState.status is ChessGameStatus.Stalemate -> {
-                    PlayfulPill(
-                        text = "DRAW BY STALEMATE 🤝",
-                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
-                        textColor = PlayfulPurple
-                    )
-                }
-                gameState.status is ChessGameStatus.DrawByInsufficientMaterial -> {
-                    PlayfulPill(
-                        text = "DRAW BY INSUFFICIENT MATERIAL 🤝",
-                        backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
-                        textColor = PlayfulPurple
-                    )
-                }
-                gameState.inCheck && !gameState.status.isGameOver -> {
-                    PlayfulPill(
-                        text = "CHECK! ⚠️",
-                        backgroundColor = Color(0xFFEF4444).copy(alpha = 0.15f),
-                        textColor = Color(0xFFEF4444)
-                    )
-                }
-                isBotThinking -> {
-                    PlayfulPill(
-                        text = "BOT IS THINKING... ♟️",
-                        backgroundColor = PlayfulPurple.copy(alpha = 0.12f),
-                        textColor = PlayfulPurple
-                    )
-                }
-                selectedMode == GameMode.SOLO -> {
-                    if (gameState.activeColor == resolvedPlayerColor) {
+            // 6. Bottom Status Strip (+ Board Flip Toggle in 2-Player mode)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = if (selectedMode == GameMode.LOCAL_1V1) {
+                    Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)
+                } else {
+                    Arrangement.Center
+                },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                when {
+                    gameState.status is ChessGameStatus.DrawByThreefoldRepetition -> {
                         PlayfulPill(
-                            text = "YOUR TURN ♟️",
+                            text = "DRAW BY THREEFOLD REPETITION 🤝",
+                            backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                            textColor = PlayfulPurple
+                        )
+                    }
+                    gameState.status is ChessGameStatus.DrawByFivefoldRepetition -> {
+                        PlayfulPill(
+                            text = "DRAW BY FIVEFOLD REPETITION 🤝",
+                            backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                            textColor = PlayfulPurple
+                        )
+                    }
+                    gameState.status is ChessGameStatus.DrawByFiftyMoves -> {
+                        PlayfulPill(
+                            text = "DRAW BY 50-MOVE RULE 🤝",
+                            backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                            textColor = PlayfulPurple
+                        )
+                    }
+                    gameState.status is ChessGameStatus.DrawBySeventyFiveMoves -> {
+                        PlayfulPill(
+                            text = "DRAW BY 75-MOVE RULE 🤝",
+                            backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                            textColor = PlayfulPurple
+                        )
+                    }
+                    gameState.status is ChessGameStatus.Stalemate -> {
+                        PlayfulPill(
+                            text = "DRAW BY STALEMATE 🤝",
+                            backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                            textColor = PlayfulPurple
+                        )
+                    }
+                    gameState.status is ChessGameStatus.DrawByInsufficientMaterial -> {
+                        PlayfulPill(
+                            text = "DRAW BY INSUFFICIENT MATERIAL 🤝",
+                            backgroundColor = PlayfulPurple.copy(alpha = 0.15f),
+                            textColor = PlayfulPurple
+                        )
+                    }
+                    gameState.inCheck && !gameState.status.isGameOver -> {
+                        PlayfulPill(
+                            text = "CHECK! ⚠️",
+                            backgroundColor = Color(0xFFEF4444).copy(alpha = 0.15f),
+                            textColor = Color(0xFFEF4444)
+                        )
+                    }
+                    isBotThinking -> {
+                        PlayfulPill(
+                            text = "BOT IS THINKING... ♟️",
+                            backgroundColor = PlayfulPurple.copy(alpha = 0.12f),
+                            textColor = PlayfulPurple
+                        )
+                    }
+                    selectedMode == GameMode.SOLO -> {
+                        if (gameState.activeColor == resolvedPlayerColor) {
+                            PlayfulPill(
+                                text = "YOUR TURN ♟️",
+                                backgroundColor = PlayfulGreen.copy(alpha = 0.12f),
+                                textColor = PlayfulGreen
+                            )
+                        } else {
+                            PlayfulPill(
+                                text = "BOT'S TURN ♟️",
+                                backgroundColor = PlayfulOrange.copy(alpha = 0.12f),
+                                textColor = PlayfulOrange
+                            )
+                        }
+                    }
+                    isNearbyMode -> {
+                        if (gameState.activeColor == localColor) {
+                            PlayfulPill(
+                                text = "YOUR TURN ♟️",
+                                backgroundColor = PlayfulGreen.copy(alpha = 0.12f),
+                                textColor = PlayfulGreen
+                            )
+                        } else {
+                            PlayfulPill(
+                                text = "OPPONENT'S TURN ♟️",
+                                backgroundColor = PlayfulOrange.copy(alpha = 0.12f),
+                                textColor = PlayfulOrange
+                            )
+                        }
+                    }
+                    gameState.activeColor == PieceColor.WHITE -> {
+                        PlayfulPill(
+                            text = "WHITE'S TURN ♟️",
                             backgroundColor = PlayfulGreen.copy(alpha = 0.12f),
                             textColor = PlayfulGreen
                         )
-                    } else {
+                    }
+                    else -> {
                         PlayfulPill(
-                            text = "BOT'S TURN ♟️",
+                            text = "BLACK'S TURN ♟️",
                             backgroundColor = PlayfulOrange.copy(alpha = 0.12f),
                             textColor = PlayfulOrange
                         )
                     }
                 }
-                isNearbyMode -> {
-                    if (gameState.activeColor == localColor) {
-                        PlayfulPill(
-                            text = "YOUR TURN ♟️",
-                            backgroundColor = PlayfulGreen.copy(alpha = 0.12f),
-                            textColor = PlayfulGreen
+
+                if (selectedMode == GameMode.LOCAL_1V1 && !gameState.status.isGameOver) {
+                    val flipBg by animateColorAsState(
+                        targetValue = if (autoFlipBoard) colors.accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface,
+                        label = "flip_toggle_bg"
+                    )
+                    val flipBorder by animateColorAsState(
+                        targetValue = if (autoFlipBoard) colors.accent else colors.border,
+                        label = "flip_toggle_border"
+                    )
+                    val flipContent by animateColorAsState(
+                        targetValue = if (autoFlipBoard) colors.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                        label = "flip_toggle_content"
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(RoundedCornerShape(50))
+                            .background(flipBg)
+                            .border(1.5.dp, flipBorder, RoundedCornerShape(50))
+                            .bouncyClickable {
+                                autoFlipBoard = !autoFlipBoard
+                                vibrate()
+                            }
+                            .semantics {
+                                role = Role.Switch
+                                toggleableState = if (autoFlipBoard) ToggleableState.On else ToggleableState.Off
+                                contentDescription = if (autoFlipBoard) {
+                                    "Board auto-flip is on. Tap to turn off."
+                                } else {
+                                    "Board auto-flip is off. Tap to turn on."
+                                }
+                            }
+                            .testTag("chess_flip_toggle_button")
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapVert,
+                            contentDescription = null,
+                            tint = flipContent,
+                            modifier = Modifier.size(16.dp)
                         )
-                    } else {
-                        PlayfulPill(
-                            text = "OPPONENT'S TURN ♟️",
-                            backgroundColor = PlayfulOrange.copy(alpha = 0.12f),
-                            textColor = PlayfulOrange
+                        Text(
+                            text = if (autoFlipBoard) "FLIP: ON" else "FLIP: OFF",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 0.6.sp
+                            ),
+                            color = flipContent
                         )
                     }
-                }
-                gameState.activeColor == PieceColor.WHITE -> {
-                    PlayfulPill(
-                        text = "WHITE'S TURN ♟️",
-                        backgroundColor = PlayfulGreen.copy(alpha = 0.12f),
-                        textColor = PlayfulGreen
-                    )
-                }
-                else -> {
-                    PlayfulPill(
-                        text = "BLACK'S TURN ♟️",
-                        backgroundColor = PlayfulOrange.copy(alpha = 0.12f),
-                        textColor = PlayfulOrange
-                    )
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))

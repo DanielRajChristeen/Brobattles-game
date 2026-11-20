@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.audio.LudoSoundManager
 import com.example.core.bot.BotDifficulty
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.ludo.LudoBoardCoordinates
 import com.example.core.engine.ludo.LudoBotOpponent
 import com.example.core.engine.ludo.LudoColor
@@ -88,7 +90,8 @@ fun LudoGameView(
     botDifficulty: BotDifficulty = BotDifficulty.MEDIUM,
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
-    onExit: () -> Unit
+    onExit: () -> Unit,
+    savedSessionJson: String? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -109,9 +112,10 @@ fun LudoGameView(
     // Nearby networking
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
 
     val localColor = remember(lobbyState, isHost) {
         if (!isNearbyMode) {
@@ -133,16 +137,25 @@ fun LudoGameView(
         mapOf(LudoColor.RED to settings.username)
     }
 
+    val restoredSession = remember(savedSessionJson, selectedMode) {
+        if (selectedMode == GameMode.SOLO && savedSessionJson != null) {
+            BotGameStateSerializer.decodeLudo(savedSessionJson)
+        } else null
+    }
     val engine = remember {
         LudoGameEngine(
             initialMode = selectedMode,
             initialPlayerCount = playerCount,
             usernames = customUsernames
-        )
+        ).apply {
+            if (restoredSession != null) {
+                setState(restoredSession.state)
+            }
+        }
     }
 
     var gameState by remember { mutableStateOf(engine.state) }
-    var displayedDice by remember { mutableIntStateOf(gameState.diceRoll ?: 6) }
+    var displayedDice by remember { mutableIntStateOf(restoredSession?.displayedDice ?: (gameState.diceRoll ?: 6)) }
     var isRolling by remember { mutableStateOf(false) }
     var isBotThinking by remember { mutableStateOf(false) }
     var isAnimating by remember { mutableStateOf(false) }
@@ -154,6 +167,26 @@ fun LudoGameView(
     var showHelpDialog by remember { mutableStateOf(false) }
     var showVictoryDialog by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
+
+    fun persistBotState() {
+        if (selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        if (current.isGameOver || current.winner != null) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_LUDO)
+        } else {
+            BotGameStateSerializer.encodeLudo(current, botDifficulty, displayedDice)?.let {
+                viewModel.saveBotSession(it)
+            }
+        }
+    }
+
+    LaunchedEffect(gameState, displayedDice, selectedMode) {
+        persistBotState()
+    }
+
+    BotSaveLifecycleEffect(enabled = selectedMode == GameMode.SOLO) {
+        persistBotState()
+    }
 
     // Sound effects stop when sound toggle turned off
     LaunchedEffect(settings.soundEnabled) {
@@ -287,11 +320,49 @@ fun LudoGameView(
         }
     }
 
+    DisposableEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "ludo" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeLudo(engine.state)
+            }
+        }
+        onDispose {
+            if (isHost) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && !isHost) {
+            multiplayerManager.consumePendingRejoinState("ludo")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeLudo(snapshot)?.let { synced ->
+                    engine.setState(synced)
+                    gameState = synced
+                    synced.diceRoll?.let { displayedDice = it }
+                    isRolling = false
+                    isAnimating = false
+                }
+            }
+        }
+    }
+
     // Nearby multiplayer network synchronization
     LaunchedEffect(Unit) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
+                        if (!isHost) {
+                            com.example.core.multiplayer.MultiplayerStateSnapshot.decodeLudo(action.payload)?.let { synced ->
+                                engine.setState(synced)
+                                gameState = synced
+                                synced.diceRoll?.let { displayedDice = it }
+                                isRolling = false
+                                isAnimating = false
+                            }
+                        }
+                    }
                     "LUDO_ROLL" -> {
                         if (isHost && !isRolling && !isAnimating) {
                             soundManager.playDiceRoll(settings.soundEnabled)
@@ -483,6 +554,15 @@ fun LudoGameView(
         ) {
             isBotThinking = true
             try {
+                // If resumed right after bot rolled dice and still needs to pick a token
+                if (!gameState.canRoll && gameState.selectableTokenIds.isNotEmpty()) {
+                    delay(500)
+                    val resumedBotTokenId = bot.decideMove(gameState, botDifficulty)
+                    if (resumedBotTokenId != null) {
+                        performAnimatedMove(resumedBotTokenId, expectedColor = gameState.currentPlayer.color)
+                        delay(400)
+                    }
+                }
                 while (!gameState.isGameOver && gameState.currentPlayer.isBot && gameState.canRoll) {
                     delay(700)
                     if (gameState.isGameOver || !gameState.currentPlayer.isBot || !gameState.canRoll) break
@@ -604,6 +684,9 @@ fun LudoGameView(
             displayedDice = 6
             matchRecorded = false
             showVictoryDialog = false
+            if (selectedMode == GameMode.SOLO) {
+                viewModel.clearBotSession(BotGameStateSerializer.GAME_LUDO)
+            }
         }
     }
 

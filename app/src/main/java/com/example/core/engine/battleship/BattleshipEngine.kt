@@ -23,6 +23,10 @@ class BattleshipEngine {
         state = BattleshipState()
     }
 
+    fun restoreState(savedState: BattleshipState) {
+        state = savedState
+    }
+
     // ==========================================
     // Ship Placement Validation & Management
     // ==========================================

@@ -36,6 +36,68 @@ class ChessEngine(initialState: ChessGameState = ChessGameState.initial()) {
         moveHistory.clear()
     }
 
+    fun getMoveHistory(): List<ChessMove> = moveHistory.toList()
+
+    fun restoreState(savedState: ChessGameState, savedMoves: List<ChessMove> = emptyList()) {
+        if (savedMoves.isNotEmpty()) {
+            val replayStates = mutableListOf(ChessGameState.initial())
+            val replayMoves = mutableListOf<ChessMove>()
+            var cur = replayStates.first()
+            var replayOk = true
+            for (savedMove in savedMoves) {
+                val legal = ChessRules.generateLegalMoves(cur)
+                val matched = legal.firstOrNull {
+                    it.from == savedMove.from &&
+                        it.to == savedMove.to &&
+                        it.promotion == savedMove.promotion
+                }
+                if (matched == null) {
+                    replayOk = false
+                    break
+                }
+                cur = ChessRules.applyMove(cur, matched)
+                replayStates.add(cur)
+                replayMoves.add(matched)
+            }
+            if (replayOk &&
+                cur.board.contentEquals(savedState.board) &&
+                cur.activeColor == savedState.activeColor &&
+                cur.fullmoveNumber == savedState.fullmoveNumber &&
+                cur.halfmoveClock == savedState.halfmoveClock
+            ) {
+                state = cur
+                stateHistory.clear()
+                stateHistory.addAll(replayStates)
+                moveHistory.clear()
+                moveHistory.addAll(replayMoves)
+                currentLegalMoves = if (state.status.isGameOver) emptyList() else ChessRules.generateLegalMoves(state)
+                return
+            }
+        }
+
+        val normalizedState = if (savedState.canonicalPositionKey.isEmpty()) {
+            val key = ChessRules.computeCanonicalPositionKey(
+                savedState.board,
+                savedState.activeColor,
+                savedState.whiteCanCastleKingside,
+                savedState.whiteCanCastleQueenside,
+                savedState.blackCanCastleKingside,
+                savedState.blackCanCastleQueenside,
+                ChessRules.getEffectiveEnPassant(savedState.board, savedState.activeColor, savedState.enPassantTarget)
+            )
+            val history = if (savedState.positionHistory.isEmpty()) listOf(key) else savedState.positionHistory
+            savedState.copy(canonicalPositionKey = key, positionHistory = history)
+        } else {
+            savedState
+        }
+
+        state = normalizedState
+        stateHistory.clear()
+        stateHistory.add(normalizedState)
+        moveHistory.clear()
+        currentLegalMoves = if (state.status.isGameOver) emptyList() else ChessRules.generateLegalMoves(state)
+    }
+
     fun getLegalMovesForSquare(square: ChessSquare): List<ChessMove> {
         if (state.status.isGameOver) return emptyList()
         return currentLegalMoves.filter { it.from == square }

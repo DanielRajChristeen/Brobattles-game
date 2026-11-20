@@ -52,6 +52,7 @@ import androidx.compose.ui.window.Dialog
 import com.example.core.multiplayer.DiscoveredSession
 import com.example.core.multiplayer.LocalWifiMultiplayerManager
 import com.example.core.multiplayer.MultiplayerLobbyState
+import com.example.core.multiplayer.RejoinRequestStatus
 import com.example.core.registry.GameDefinition
 import com.example.ui.components.ChunkyButton
 import com.example.ui.components.bouncyClickable
@@ -73,7 +74,9 @@ fun NearbyMultiplayerDialog(
     onGameStarted: () -> Unit
 ) {
     val lobbyState by manager.lobbyState.collectAsState()
-    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Host, 1 = Join
+    val lastMatchSession by manager.lastMatchSession.collectAsState()
+    val hasMatchingRejoinSession = lastMatchSession?.gameId?.equals(game.id, ignoreCase = true) == true
+    var selectedTab by remember { mutableIntStateOf(if (hasMatchingRejoinSession) 1 else 0) } // 0 = Host, 1 = Join
 
     // Pre-Settings configured by Host before game launch
     var hostTargetScore by remember(targetScore) { mutableIntStateOf(targetScore) }
@@ -375,8 +378,24 @@ private fun HostLobbyContent(
     val canStart = players.size >= 2
 
     val chessHostColor by manager.chessHostColor.collectAsState()
+    val pendingRejoinRequests by manager.pendingRejoinRequests.collectAsState()
 
     Column(modifier = Modifier.fillMaxWidth()) {
+        if (pendingRejoinRequests.isNotEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                pendingRejoinRequests.forEach { request ->
+                    IncomingRejoinRequestCard(
+                        request = request,
+                        onAccept = { manager.acceptRejoinRequest(request.playerId) },
+                        onReject = { manager.rejectRejoinRequest(request.playerId) }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
         // Game and network helper
         Box(
             modifier = Modifier
@@ -915,6 +934,8 @@ private fun JoinLobbyContent(
     val isCheckers = game.id.equals("checkers", ignoreCase = true)
     val chessHostColor by manager.chessHostColor.collectAsState()
     val hostConfigPreviewStr by manager.hostConfigPreview.collectAsState()
+    val rejoinStatus by manager.rejoinRequestStatus.collectAsState()
+    val lastMatchSession by manager.lastMatchSession.collectAsState()
 
     val hostConfigObj = remember(hostConfigPreviewStr) {
         if (hostConfigPreviewStr.isNotBlank()) {
@@ -947,6 +968,72 @@ private fun JoinLobbyContent(
         }
 
         Spacer(modifier = Modifier.height(8.dp))
+
+        if (rejoinStatus is RejoinRequestStatus.Pending) {
+            val pending = rejoinStatus as RejoinRequestStatus.Pending
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(PlayfulOrange.copy(alpha = 0.12f))
+                    .border(1.5.dp, PlayfulOrange, RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+                    .testTag("join_lobby_rejoin_pending"),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = PlayfulOrange
+                    )
+                    Text(
+                        text = "Rejoin request sent to ${pending.session.hostName}. Waiting for host approval...",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        } else if (rejoinStatus is RejoinRequestStatus.Rejected) {
+            val rejected = rejoinStatus as RejoinRequestStatus.Rejected
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFFEF4444).copy(alpha = 0.12f))
+                    .border(1.5.dp, Color(0xFFEF4444).copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                    .padding(12.dp)
+                    .testTag("join_lobby_rejoin_rejected"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = rejected.reason,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                    color = Color(0xFFEF4444),
+                    textAlign = TextAlign.Center
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        val savedSession = lastMatchSession
+        if (savedSession != null &&
+            savedSession.gameId.equals(game.id, ignoreCase = true) &&
+            rejoinStatus !is RejoinRequestStatus.Pending &&
+            !isConnected &&
+            !isConnecting &&
+            sessions.none { it.sessionId == savedSession.sessionId }
+        ) {
+            DiscoveredSessionItem(
+                session = savedSession.copy(isInProgress = true),
+                onJoin = { manager.requestRejoin(savedSession) }
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
 
         if (isConnected) {
             val connectedState = lobbyState as MultiplayerLobbyState.Connected
@@ -1032,7 +1119,7 @@ private fun JoinLobbyContent(
                     )
                 }
             }
-        } else {
+        } else if (rejoinStatus !is RejoinRequestStatus.Pending) {
             if (sessions.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -1175,7 +1262,11 @@ private fun DiscoveredSessionItem(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "${session.gameTitle} • ${session.currentPlayers} / ${session.maxPlayers} players",
+                    text = if (session.isInProgress) {
+                        "${session.gameTitle} • Match in progress"
+                    } else {
+                        "${session.gameTitle} • ${session.currentPlayers} / ${session.maxPlayers} players"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
@@ -1184,13 +1275,14 @@ private fun DiscoveredSessionItem(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(PlayfulGreen)
+                    .background(if (session.isInProgress) PlayfulOrange else PlayfulGreen)
                     .bouncyClickable { onJoin() }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                    .testTag(if (session.isInProgress) "rejoin_session_button_${session.sessionId}" else "join_session_button_${session.sessionId}"),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "JOIN",
+                    text = if (session.isInProgress) "REJOIN" else "JOIN",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Black),
                     color = Color.White
                 )

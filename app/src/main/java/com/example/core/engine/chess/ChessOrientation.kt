@@ -30,10 +30,11 @@ object ChessBoardOrientation {
         selectedMode: GameMode,
         activeColor: PieceColor,
         localColor: PieceColor,
-        humanPlayerColor: PieceColor = PieceColor.WHITE
+        humanPlayerColor: PieceColor = PieceColor.WHITE,
+        autoFlipLocalBoard: Boolean = true
     ): Boolean {
         return when (selectedMode) {
-            GameMode.LOCAL_1V1 -> activeColor == PieceColor.BLACK
+            GameMode.LOCAL_1V1 -> autoFlipLocalBoard && activeColor == PieceColor.BLACK
             GameMode.BLUETOOTH_1V1 -> localColor == PieceColor.BLACK
             GameMode.SOLO -> humanPlayerColor == PieceColor.BLACK
         }

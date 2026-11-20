@@ -66,6 +66,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.audio.BattleshipSoundManager
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.battleship.BattleshipBot
 import com.example.core.engine.battleship.BattleshipEngine
 import com.example.core.engine.battleship.BattleshipPhase
@@ -97,7 +99,8 @@ fun BattleshipGameView(
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
     onExit: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    savedSessionJson: String? = null
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -119,21 +122,69 @@ fun BattleshipGameView(
         }
     }
 
-    val engine = remember { BattleshipEngine() }
+    val restoredSession = remember(savedSessionJson, selectedMode) {
+        if (selectedMode == GameMode.SOLO && savedSessionJson != null) {
+            BotGameStateSerializer.decodeBattleship(savedSessionJson)
+        } else null
+    }
+    val engine = remember {
+        BattleshipEngine().apply {
+            if (restoredSession != null) {
+                restoreState(restoredSession.state)
+            }
+        }
+    }
     var gameState by remember { mutableStateOf(engine.state) }
-    val bot = remember { BattleshipBot() }
+    val bot = remember {
+        BattleshipBot().apply {
+            if (restoredSession != null) {
+                restoreActiveHits(restoredSession.botActiveHits)
+            }
+        }
+    }
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
     val localPlayer = if (isHost) BattleshipPlayer.PLAYER_1 else BattleshipPlayer.PLAYER_2
 
     // Local placement state
-    var selectedShipType by remember { mutableStateOf<ShipType?>(ShipType.CARRIER) }
-    var deploymentOrientation by remember { mutableStateOf(ShipOrientation.HORIZONTAL) }
-    var activeBoardTab by remember { mutableIntStateOf(0) } // 0 = RADAR (Attack), 1 = FLEET (Defense)
+    var selectedShipType by remember {
+        mutableStateOf<ShipType?>(if (restoredSession != null) restoredSession.selectedShipType else ShipType.CARRIER)
+    }
+    var deploymentOrientation by remember {
+        mutableStateOf(restoredSession?.deploymentOrientation ?: ShipOrientation.HORIZONTAL)
+    }
+    var activeBoardTab by remember {
+        mutableIntStateOf(restoredSession?.activeBoardTab ?: 0)
+    } // 0 = RADAR (Attack), 1 = FLEET (Defense)
+
+    fun persistBotState() {
+        if (selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        if (current.isGameOver || !BotGameStateSerializer.hasResumableBattleshipProgress(current)) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_BATTLESHIP)
+        } else {
+            BotGameStateSerializer.encodeBattleship(
+                state = current,
+                botActiveHits = bot.getActiveHits(),
+                selectedShipType = selectedShipType,
+                deploymentOrientation = deploymentOrientation,
+                activeBoardTab = activeBoardTab
+            )?.let { viewModel.saveBotSession(it) }
+        }
+    }
+
+    LaunchedEffect(gameState, selectedShipType, deploymentOrientation, activeBoardTab, selectedMode) {
+        persistBotState()
+    }
+
+    BotSaveLifecycleEffect(enabled = selectedMode == GameMode.SOLO) {
+        persistBotState()
+    }
 
     // Handover & UI state
     var isHandoverVisible by remember { mutableStateOf(false) }
@@ -258,6 +309,9 @@ fun BattleshipGameView(
         isAttackAnimating = false
         soundManager.stopAllSounds()
         sessionKey++
+        if (selectedMode == GameMode.SOLO) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_BATTLESHIP)
+        }
         vibrate()
     }
 
@@ -807,6 +861,34 @@ fun BattleshipGameView(
         }
     }
 
+    DisposableEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "battleship" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeBattleship(engine.state)
+            }
+        }
+        onDispose {
+            if (isHost) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && !isHost) {
+            multiplayerManager.consumePendingRejoinState("battleship")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeBattleship(snapshot)?.let { restored ->
+                    engine.restoreState(restored)
+                    gameState = engine.state
+                    if (restored.phase == BattleshipPhase.BATTLE) {
+                        localPlayerDeployed = true
+                        remotePlayerReady = true
+                    }
+                }
+            }
+        }
+    }
+
     // ==========================================
     // WiFi Play Networking Action Listener
     // ==========================================
@@ -814,6 +896,18 @@ fun BattleshipGameView(
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
+                        if (!isHost) {
+                            com.example.core.multiplayer.MultiplayerStateSnapshot.decodeBattleship(action.payload)?.let { restored ->
+                                engine.restoreState(restored)
+                                gameState = engine.state
+                                if (restored.phase == BattleshipPhase.BATTLE) {
+                                    localPlayerDeployed = true
+                                    remotePlayerReady = true
+                                }
+                            }
+                        }
+                    }
                     BattleshipNetworkProtocol.ACTION_FLEET_SUBMITTED -> {
                         if (isHost) {
                             val clientPlacements = BattleshipNetworkProtocol.deserializeFleet(action.payload)

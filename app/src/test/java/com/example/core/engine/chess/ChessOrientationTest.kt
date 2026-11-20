@@ -267,4 +267,35 @@ class ChessOrientationTest {
             )
         )
     }
+
+    @Test
+    fun `same-device 2-player mode respects autoFlipLocalBoard toggle when turned off`() {
+        // Flip OFF: board stays fixed with White at bottom for both White and Black turns
+        assertFalse(
+            ChessBoardOrientation.isBoardRotated(
+                selectedMode = GameMode.LOCAL_1V1,
+                activeColor = PieceColor.WHITE,
+                localColor = PieceColor.WHITE,
+                autoFlipLocalBoard = false
+            )
+        )
+        assertFalse(
+            ChessBoardOrientation.isBoardRotated(
+                selectedMode = GameMode.LOCAL_1V1,
+                activeColor = PieceColor.BLACK,
+                localColor = PieceColor.WHITE,
+                autoFlipLocalBoard = false
+            )
+        )
+
+        // Flip ON: board flips on Black's turn
+        assertTrue(
+            ChessBoardOrientation.isBoardRotated(
+                selectedMode = GameMode.LOCAL_1V1,
+                activeColor = PieceColor.BLACK,
+                localColor = PieceColor.WHITE,
+                autoFlipLocalBoard = true
+            )
+        )
+    }
 }

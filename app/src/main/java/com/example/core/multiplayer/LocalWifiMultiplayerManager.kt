@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -24,7 +25,6 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
-import kotlin.random.Random
 
 /**
  * Authoritative local Wi-Fi / hotspot session manager for Chill Games.
@@ -33,7 +33,8 @@ import kotlin.random.Random
  */
 class LocalWifiMultiplayerManager(
     private val context: Context,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    playerIdOverride: String? = null
 ) {
     private val discovery = WifiLanDiscovery(context)
 
@@ -73,10 +74,73 @@ class LocalWifiMultiplayerManager(
     private val _hostConfigPreview = MutableStateFlow<String>("")
     val hostConfigPreview: StateFlow<String> = _hostConfigPreview.asStateFlow()
 
+    // Role & Rejoin state flows
+    private val _isSessionHost = MutableStateFlow(false)
+    val isSessionHost: StateFlow<Boolean> = _isSessionHost.asStateFlow()
+
+    private val _pendingRejoinRequests = MutableStateFlow<List<RejoinRequest>>(emptyList())
+    val pendingRejoinRequests: StateFlow<List<RejoinRequest>> = _pendingRejoinRequests.asStateFlow()
+
+    private val _rejoinRequestStatus = MutableStateFlow<RejoinRequestStatus>(RejoinRequestStatus.Idle)
+    val rejoinRequestStatus: StateFlow<RejoinRequestStatus> = _rejoinRequestStatus.asStateFlow()
+
+    private val _lastMatchSession = MutableStateFlow<DiscoveredSession?>(null)
+    val lastMatchSession: StateFlow<DiscoveredSession?> = _lastMatchSession.asStateFlow()
+
+    private val _pendingRejoinStateSync = MutableStateFlow<Pair<String, String>?>(null)
+    val pendingRejoinStateSync: StateFlow<Pair<String, String>?> = _pendingRejoinStateSync.asStateFlow()
+
+    @Volatile
+    private var hostStateSnapshotProvider: (() -> Pair<String, String>?)? = null
+
     private var graceJob: Job? = null
-    private var clientAutoReconnectJob: Job? = null
     private var lastInGameSession: DiscoveredSession? = null
     private var lastPlayerName: String = ""
+
+    private data class ClientConnection(
+        val playerId: String,
+        val socket: Socket,
+        val writer: BufferedWriter
+    )
+
+    private data class PendingRejoinEntry(
+        val request: RejoinRequest,
+        val player: MultiplayerPlayer,
+        val socket: Socket,
+        val writer: BufferedWriter
+    )
+
+    private val connectionLock = Any()
+    private val activeClientConnections = LinkedHashMap<String, ClientConnection>()
+    private val pendingRejoinEntries = LinkedHashMap<String, PendingRejoinEntry>()
+
+    @Volatile
+    private var activeMatchSession: DiscoveredSession? = null
+    @Volatile
+    private var activeMatchHostPlayer: MultiplayerPlayer? = null
+    @Volatile
+    private var activeGameConfigPayload: String = ""
+    private val activeMatchRoster = mutableListOf<MultiplayerPlayer>()
+
+    private val localPlayerId: String = playerIdOverride ?: resolveOrCreateStablePlayerId(context)
+
+    val currentPlayerId: String
+        get() = localPlayerId
+
+    fun registerHostStateSnapshotProvider(provider: (() -> Pair<String, String>?)?) {
+        hostStateSnapshotProvider = provider
+    }
+
+    fun consumePendingRejoinState(gameId: String): String? {
+        val pending = _pendingRejoinStateSync.value ?: return null
+        if (!pending.first.equals(gameId, ignoreCase = true)) return null
+        _pendingRejoinStateSync.value = null
+        return pending.second
+    }
+
+    fun clearRejoinStatus() {
+        _rejoinRequestStatus.value = RejoinRequestStatus.Idle
+    }
 
     fun broadcastHostConfigPreview(configJson: String) {
         _hostConfigPreview.value = configJson
@@ -103,10 +167,9 @@ class LocalWifiMultiplayerManager(
         scope.launch(Dispatchers.Main) {
             graceJob?.cancel()
             graceJob = null
-            clientAutoReconnectJob?.cancel()
-            clientAutoReconnectJob = null
             _isConnectionPaused.value = false
             _pauseRemainingSeconds.value = null
+            _pauseReason.value = ""
             sendAction("WIFI_RESUME_GAME", "RESUMED")
         }
     }
@@ -114,24 +177,22 @@ class LocalWifiMultiplayerManager(
     fun exitLobbyFromGrace() {
         graceJob?.cancel()
         graceJob = null
-        clientAutoReconnectJob?.cancel()
-        clientAutoReconnectJob = null
         _isConnectionPaused.value = false
         _pauseRemainingSeconds.value = null
-        disconnect()
+        _pauseReason.value = ""
+        // Preserve lastMatchSession for client so they can still request rejoin from Join Lobby
+        disconnect(clearLastMatchSession = _isSessionHost.value)
     }
-
-    private val localPlayerId = UUID.randomUUID().toString()
 
     // Host networking state
     private var hostServerSocket: ServerSocket? = null
     private var hostAcceptJob: Job? = null
-    private val clientSockets = mutableListOf<Socket>()
-    private val clientWriters = mutableListOf<BufferedWriter>()
     private val hostConnectedPlayers = mutableListOf<MultiplayerPlayer>()
 
     // Client networking state
+    @Volatile
     private var clientSocket: Socket? = null
+    @Volatile
     private var clientWriter: BufferedWriter? = null
     private var clientReaderJob: Job? = null
 
@@ -158,7 +219,8 @@ class LocalWifiMultiplayerManager(
         hostName: String = localDeviceName,
         maxPlayersOverride: Int? = null
     ) {
-        disconnect()
+        disconnect(clearLastMatchSession = true)
+        _isSessionHost.value = true
 
         val localIp = discovery.getLocalIpAddress()
         val serverSocket = try {
@@ -185,7 +247,8 @@ class LocalWifiMultiplayerManager(
             hostIp = localIp,
             port = serverSocket.localPort,
             currentPlayers = 1,
-            maxPlayers = maxPlayers
+            maxPlayers = maxPlayers,
+            isInProgress = false
         )
 
         val hostPlayer = MultiplayerPlayer(
@@ -198,6 +261,7 @@ class LocalWifiMultiplayerManager(
         synchronized(hostConnectedPlayers) {
             hostConnectedPlayers.clear()
             hostConnectedPlayers.add(hostPlayer)
+            activeMatchRoster.clear()
         }
 
         _lobbyState.value = MultiplayerLobbyState.Hosting(
@@ -231,137 +295,175 @@ class LocalWifiMultiplayerManager(
         hostPlayer: MultiplayerPlayer
     ) {
         scope.launch(Dispatchers.IO) {
-            var clientWriterRef: BufferedWriter? = null
+            var associatedPlayerId: String? = null
             try {
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                 val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream()))
-                clientWriterRef = writer
 
-                // Wait for initial JOIN_REQUEST
                 val firstLine = reader.readLine() ?: return@launch
-                val joinMsg = MultiplayerMessage.fromJson(firstLine)
+                val firstMsg = MultiplayerMessage.fromJson(firstLine) ?: return@launch
 
-                if (joinMsg?.type == MultiplayerMessage.TYPE_JOIN_REQUEST) {
-                    val clientSenderId = joinMsg.senderId
-                    val rawName = if (joinMsg.payload.isNotBlank()) joinMsg.payload else "Player"
+                val currentMatchSession = activeMatchSession
+                if (currentMatchSession != null) {
+                    handleIncomingMatchRejoin(
+                        socket = socket,
+                        reader = reader,
+                        writer = writer,
+                        firstMsg = firstMsg,
+                        matchSession = currentMatchSession,
+                        hostPlayer = activeMatchHostPlayer ?: hostPlayer
+                    )
+                    return@launch
+                }
 
-                    var assignedPlayer: MultiplayerPlayer? = null
-                    var isFull = false
-                    var currentPlayersSnapshot: List<MultiplayerPlayer> = emptyList()
-
-                    synchronized(hostConnectedPlayers) {
-                        val existingIndex = hostConnectedPlayers.indexOfFirst { it.id == clientSenderId }
-                        if (existingIndex >= 0) {
-                            val existing = hostConnectedPlayers[existingIndex]
-                            assignedPlayer = existing
-                        } else if (hostConnectedPlayers.size >= session.maxPlayers) {
-                            isFull = true
-                        } else {
-                            val nextIndex = hostConnectedPlayers.size + 1
-                            val newRole = "PLAYER_$nextIndex"
-                            val displayName = if (rawName != "Player") rawName else "Player $nextIndex"
-                            val newPlayer = MultiplayerPlayer(
-                                id = clientSenderId,
-                                name = displayName,
-                                isHost = false,
-                                role = newRole
-                            )
-                            hostConnectedPlayers.add(newPlayer)
-                            assignedPlayer = newPlayer
-                        }
-                        currentPlayersSnapshot = hostConnectedPlayers.toList()
-                    }
-
-                    if (isFull || assignedPlayer == null) {
-                        val rejectMsg = MultiplayerMessage(
-                            type = MultiplayerMessage.TYPE_JOIN_REJECTED,
-                            sessionId = session.sessionId,
-                            senderId = localPlayerId,
-                            payload = "Room is full (max ${session.maxPlayers} players)"
-                        )
-                        sendRawToWriter(writer, rejectMsg)
-                        try { socket.close() } catch (ignored: Exception) {}
-                        return@launch
-                    }
-
-                    synchronized(clientSockets) {
-                        clientSockets.add(socket)
-                        clientWriters.add(writer)
-                    }
-
-                    val playersJsonArr = org.json.JSONArray().apply {
-                        currentPlayersSnapshot.forEach { p ->
-                            put(JSONObject().apply {
-                                put("id", p.id)
-                                put("name", p.name)
-                                put("isHost", p.isHost)
-                                put("role", p.role)
-                            })
-                        }
-                    }
-
-                    // Acknowledge join with assigned role and full player list
-                    val acceptMsg = MultiplayerMessage(
-                        type = MultiplayerMessage.TYPE_JOIN_ACCEPTED,
+                // Pre-game lobby: reject stray REJOIN_REQUEST cleanly
+                if (firstMsg.type == MultiplayerMessage.TYPE_REJOIN_REQUEST) {
+                    val rejectMsg = MultiplayerMessage(
+                        type = MultiplayerMessage.TYPE_REJOIN_REJECTED,
                         sessionId = session.sessionId,
                         senderId = localPlayerId,
-                        payload = JSONObject().apply {
-                            put("role", assignedPlayer.role)
-                            put("gameId", session.gameId)
-                            put("gameTitle", session.gameTitle)
-                            put("hostName", hostPlayer.name)
-                            put("chessHostColor", _chessHostColor.value)
-                            put("maxPlayers", session.maxPlayers)
-                            put("players", playersJsonArr)
-                        }.toString()
+                        payload = "No active match is running in this room"
                     )
-                    sendRawToWriter(writer, acceptMsg)
+                    sendRawToWriter(writer, rejectMsg)
+                    try { socket.close() } catch (_: Exception) {}
+                    return@launch
+                }
 
-                    // Broadcast updated player list to all connected clients
-                    val playerListMsg = MultiplayerMessage(
-                        type = MultiplayerMessage.TYPE_PLAYER_LIST,
+                if (firstMsg.type != MultiplayerMessage.TYPE_JOIN_REQUEST) {
+                    try { socket.close() } catch (_: Exception) {}
+                    return@launch
+                }
+
+                val clientSenderId = firstMsg.senderId
+                associatedPlayerId = clientSenderId
+                val rawName = if (firstMsg.payload.isNotBlank()) firstMsg.payload else "Player"
+
+                var assignedPlayer: MultiplayerPlayer? = null
+                var isFull = false
+                var currentPlayersSnapshot: List<MultiplayerPlayer> = emptyList()
+
+                val currentMaxPlayers = when (val st = _lobbyState.value) {
+                    is MultiplayerLobbyState.Hosting -> st.session.maxPlayers
+                    is MultiplayerLobbyState.Connected -> st.session.maxPlayers
+                    else -> session.maxPlayers
+                }
+
+                synchronized(hostConnectedPlayers) {
+                    val existingIndex = hostConnectedPlayers.indexOfFirst { it.id == clientSenderId }
+                    if (existingIndex >= 0) {
+                        val existing = hostConnectedPlayers[existingIndex]
+                        assignedPlayer = existing
+                    } else if (hostConnectedPlayers.size >= currentMaxPlayers) {
+                        isFull = true
+                    } else {
+                        val nextIndex = hostConnectedPlayers.size + 1
+                        val newRole = "PLAYER_$nextIndex"
+                        val displayName = if (rawName != "Player") rawName else "Player $nextIndex"
+                        val newPlayer = MultiplayerPlayer(
+                            id = clientSenderId,
+                            name = displayName,
+                            isHost = false,
+                            role = newRole
+                        )
+                        hostConnectedPlayers.add(newPlayer)
+                        assignedPlayer = newPlayer
+                    }
+                    currentPlayersSnapshot = hostConnectedPlayers.toList()
+                }
+
+                if (isFull || assignedPlayer == null) {
+                    val rejectMsg = MultiplayerMessage(
+                        type = MultiplayerMessage.TYPE_JOIN_REJECTED,
                         sessionId = session.sessionId,
                         senderId = localPlayerId,
-                        payload = playersJsonArr.toString()
+                        payload = "Room is full (max $currentMaxPlayers players)"
                     )
-                    broadcastToClients(playerListMsg)
+                    sendRawToWriter(writer, rejectMsg)
+                    try { socket.close() } catch (_: Exception) {}
+                    return@launch
+                }
 
-                    val updatedSession = session.copy(currentPlayers = currentPlayersSnapshot.size)
-                    if (_lobbyState.value !is MultiplayerLobbyState.InGame) {
-                        _lobbyState.value = MultiplayerLobbyState.Connected(
-                            session = updatedSession,
-                            localPlayer = hostPlayer,
-                            players = currentPlayersSnapshot,
-                            isHost = true
-                        )
-                    }
-                    discovery.startAnnouncing(updatedSession, scope)
-                    if (_isConnectionPaused.value) {
-                        notifyConnectionResumed()
-                    }
+                var previousSocket: Socket? = null
+                synchronized(connectionLock) {
+                    previousSocket = activeClientConnections[clientSenderId]?.socket
+                    activeClientConnections[clientSenderId] = ClientConnection(clientSenderId, socket, writer)
+                }
+                if (previousSocket != null && previousSocket !== socket) {
+                    try { previousSocket?.close() } catch (_: Exception) {}
+                }
 
-                    // Read loop for this connected client
-                    var line: String? = reader.readLine()
-                    while (line != null && isActive) {
-                        val msg = MultiplayerMessage.fromJson(line)
-                        if (msg != null) {
-                            handleMessageFromClient(msg)
-                        }
-                        line = reader.readLine()
+                val playersJsonArr = encodePlayersJson(currentPlayersSnapshot)
+
+                // Acknowledge join with assigned role and full player list
+                val acceptMsg = MultiplayerMessage(
+                    type = MultiplayerMessage.TYPE_JOIN_ACCEPTED,
+                    sessionId = session.sessionId,
+                    senderId = localPlayerId,
+                    payload = JSONObject().apply {
+                        put("role", assignedPlayer.role)
+                        put("gameId", session.gameId)
+                        put("gameTitle", session.gameTitle)
+                        put("hostName", hostPlayer.name)
+                        put("chessHostColor", _chessHostColor.value)
+                        put("maxPlayers", currentMaxPlayers)
+                        put("players", playersJsonArr)
+                    }.toString()
+                )
+                sendRawToWriter(writer, acceptMsg)
+
+                // Broadcast updated player list to all connected clients
+                val playerListMsg = MultiplayerMessage(
+                    type = MultiplayerMessage.TYPE_PLAYER_LIST,
+                    sessionId = session.sessionId,
+                    senderId = localPlayerId,
+                    payload = playersJsonArr.toString()
+                )
+                broadcastToClients(playerListMsg)
+
+                val updatedSession = session.copy(
+                    currentPlayers = currentPlayersSnapshot.size,
+                    maxPlayers = currentMaxPlayers
+                )
+                if (_lobbyState.value !is MultiplayerLobbyState.InGame) {
+                    _lobbyState.value = MultiplayerLobbyState.Connected(
+                        session = updatedSession,
+                        localPlayer = hostPlayer,
+                        players = currentPlayersSnapshot,
+                        isHost = true
+                    )
+                }
+                discovery.startAnnouncing(updatedSession, scope)
+                if (_isConnectionPaused.value) {
+                    notifyConnectionResumed()
+                }
+
+                // Read loop for this connected client
+                var line: String? = reader.readLine()
+                while (line != null && isActive) {
+                    val msg = MultiplayerMessage.fromJson(line)
+                    if (msg != null) {
+                        handleMessageFromClient(msg)
                     }
+                    line = reader.readLine()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Client socket handler ended: ${e.message}")
             } finally {
-                synchronized(clientSockets) {
-                    clientSockets.remove(socket)
-                    clientWriterRef?.let { clientWriters.remove(it) }
+                val playerId = associatedPlayerId
+                var wasActiveConnection = false
+                var remainingClients = 0
+                synchronized(connectionLock) {
+                    if (playerId != null && activeClientConnections[playerId]?.socket === socket) {
+                        activeClientConnections.remove(playerId)
+                        wasActiveConnection = true
+                    }
+                    remainingClients = activeClientConnections.size
                 }
-                try { socket.close() } catch (ignored: Exception) {}
-                val state = _lobbyState.value
-                if (state is MultiplayerLobbyState.Connected || state is MultiplayerLobbyState.InGame) {
-                    synchronized(clientSockets) {
-                        if (clientSockets.isEmpty()) {
+                try { socket.close() } catch (_: Exception) {}
+                if (wasActiveConnection) {
+                    val state = _lobbyState.value
+                    if (state is MultiplayerLobbyState.Connected || state is MultiplayerLobbyState.InGame) {
+                        if (remainingClients == 0) {
                             onPeerDisconnected("Opponent disconnected")
                         }
                     }
@@ -371,10 +473,275 @@ class LocalWifiMultiplayerManager(
     }
 
     /**
+     * Handles incoming rejoin (or join-while-in-progress) connections on the Host while a match is active.
+     * Validates room session ID & original participant identity, deduplicates pending requests,
+     * publishes to [pendingRejoinRequests] in real time, and transitions seamlessly into gameplay
+     * once the Host accepts.
+     */
+    private suspend fun handleIncomingMatchRejoin(
+        socket: Socket,
+        reader: BufferedReader,
+        writer: BufferedWriter,
+        firstMsg: MultiplayerMessage,
+        matchSession: DiscoveredSession,
+        hostPlayer: MultiplayerPlayer
+    ) {
+        if (firstMsg.type != MultiplayerMessage.TYPE_REJOIN_REQUEST &&
+            firstMsg.type != MultiplayerMessage.TYPE_JOIN_REQUEST
+        ) {
+            try { socket.close() } catch (_: Exception) {}
+            return
+        }
+
+        val sessionMatches = firstMsg.sessionId == matchSession.sessionId ||
+            firstMsg.sessionId.startsWith("direct_")
+        if (!sessionMatches) {
+            sendRawToWriter(
+                writer,
+                MultiplayerMessage(
+                    type = MultiplayerMessage.TYPE_REJOIN_REJECTED,
+                    sessionId = matchSession.sessionId,
+                    senderId = localPlayerId,
+                    payload = "Invalid room session"
+                )
+            )
+            try { socket.close() } catch (_: Exception) {}
+            return
+        }
+
+        val requesterId = firstMsg.senderId
+        val originalPlayer: MultiplayerPlayer? = synchronized(hostConnectedPlayers) {
+            activeMatchRoster.firstOrNull { !it.isHost && it.id == requesterId }
+        }
+
+        if (originalPlayer == null) {
+            sendRawToWriter(
+                writer,
+                MultiplayerMessage(
+                    type = MultiplayerMessage.TYPE_REJOIN_REJECTED,
+                    sessionId = matchSession.sessionId,
+                    senderId = localPlayerId,
+                    payload = "Match already in progress — only original players can rejoin"
+                )
+            )
+            try { socket.close() } catch (_: Exception) {}
+            return
+        }
+
+        val displayName = firstMsg.payload.trim().ifBlank { originalPlayer.name }
+        val updatedPlayer = originalPlayer.copy(name = displayName)
+        val request = RejoinRequest(
+            playerId = originalPlayer.id,
+            playerName = displayName,
+            role = originalPlayer.role,
+            requestedAt = System.currentTimeMillis()
+        )
+        val entry = PendingRejoinEntry(
+            request = request,
+            player = updatedPlayer,
+            socket = socket,
+            writer = writer
+        )
+
+        var supersededPendingSocket: Socket? = null
+        synchronized(connectionLock) {
+            supersededPendingSocket = pendingRejoinEntries[requesterId]?.socket
+            pendingRejoinEntries[requesterId] = entry
+            publishPendingRejoinRequestsLocked()
+        }
+        if (supersededPendingSocket != null && supersededPendingSocket !== socket) {
+            try { supersededPendingSocket?.close() } catch (_: Exception) {}
+        }
+
+        // Notify requesting player immediately that Host has received the rejoin request
+        sendRawToWriter(
+            writer,
+            MultiplayerMessage(
+                type = MultiplayerMessage.TYPE_REJOIN_PENDING,
+                sessionId = matchSession.sessionId,
+                senderId = localPlayerId,
+                payload = JSONObject().apply {
+                    put("sessionId", matchSession.sessionId)
+                    put("hostName", hostPlayer.name)
+                    put("gameId", matchSession.gameId)
+                    put("gameTitle", matchSession.gameTitle)
+                    put("role", originalPlayer.role)
+                }.toString()
+            )
+        )
+
+        // Single reader loop: monitors cancellation while pending, then seamlessly handles
+        // live gameplay actions once Host accepts the request.
+        try {
+            var line: String? = reader.readLine()
+            while (line != null && scope.isActive) {
+                val msg = MultiplayerMessage.fromJson(line)
+                if (msg != null) {
+                    val isAcceptedSocket = synchronized(connectionLock) {
+                        activeClientConnections[requesterId]?.socket === socket
+                    }
+                    if (isAcceptedSocket) {
+                        handleMessageFromClient(msg)
+                    } else if (msg.type == MultiplayerMessage.TYPE_LEAVE) {
+                        // Requester cancelled their pending rejoin request
+                        break
+                    }
+                }
+                line = reader.readLine()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Rejoin client socket ended for $requesterId: ${e.message}")
+        } finally {
+            var wasActive = false
+            var remainingClients = 0
+            synchronized(connectionLock) {
+                if (pendingRejoinEntries[requesterId]?.socket === socket) {
+                    pendingRejoinEntries.remove(requesterId)
+                    publishPendingRejoinRequestsLocked()
+                }
+                if (activeClientConnections[requesterId]?.socket === socket) {
+                    activeClientConnections.remove(requesterId)
+                    wasActive = true
+                }
+                remainingClients = activeClientConnections.size
+            }
+            try { socket.close() } catch (_: Exception) {}
+            if (wasActive && activeMatchSession != null && remainingClients == 0) {
+                val state = _lobbyState.value
+                if (state is MultiplayerLobbyState.InGame || state is MultiplayerLobbyState.Connected) {
+                    onPeerDisconnected("Opponent disconnected")
+                }
+            }
+        }
+    }
+
+    /**
+     * Called by the Host to approve an incoming rejoin request.
+     * Reconnects the original player into the existing room, restores their identity & role,
+     * sends the authoritative live match state snapshot, and resumes active gameplay.
+     */
+    fun acceptRejoinRequest(playerId: String) {
+        val matchSession = activeMatchSession ?: return
+        val matchHost = activeMatchHostPlayer ?: return
+
+        val entry: PendingRejoinEntry
+        var previousActiveSocket: Socket? = null
+        synchronized(connectionLock) {
+            val pending = pendingRejoinEntries.remove(playerId) ?: return
+            entry = pending
+            previousActiveSocket = activeClientConnections[playerId]?.socket
+            activeClientConnections[playerId] = ClientConnection(playerId, pending.socket, pending.writer)
+            publishPendingRejoinRequestsLocked()
+        }
+
+        if (previousActiveSocket != null && previousActiveSocket !== entry.socket) {
+            try { previousActiveSocket?.close() } catch (_: Exception) {}
+        }
+
+        val rosterSnapshot: List<MultiplayerPlayer> = synchronized(hostConnectedPlayers) {
+            val idx = activeMatchRoster.indexOfFirst { it.id == playerId }
+            if (idx >= 0) {
+                activeMatchRoster[idx] = entry.player
+            }
+            val connIdx = hostConnectedPlayers.indexOfFirst { it.id == playerId }
+            if (connIdx >= 0) {
+                hostConnectedPlayers[connIdx] = entry.player
+            }
+            activeMatchRoster.toList()
+        }
+
+        // Capture live authoritative game state from the Host's active game view
+        val snapshotPair = try {
+            hostStateSnapshotProvider?.invoke()
+        } catch (e: Exception) {
+            Log.w(TAG, "Host snapshot capture failed: ${e.message}")
+            null
+        }
+
+        val updatedSession = matchSession.copy(
+            currentPlayers = rosterSnapshot.size,
+            isInProgress = true
+        )
+        activeMatchSession = updatedSession
+
+        val acceptPayload = JSONObject().apply {
+            put("role", entry.player.role)
+            put("gameId", updatedSession.gameId)
+            put("gameTitle", updatedSession.gameTitle)
+            put("hostName", matchHost.name)
+            put("chessHostColor", _chessHostColor.value)
+            put("maxPlayers", updatedSession.maxPlayers)
+            put("config", activeGameConfigPayload)
+            put("players", encodePlayersJson(rosterSnapshot))
+            if (snapshotPair != null) {
+                put("stateGameId", snapshotPair.first)
+                put("stateSnapshot", snapshotPair.second)
+            }
+        }.toString()
+
+        val acceptMsg = MultiplayerMessage(
+            type = MultiplayerMessage.TYPE_REJOIN_ACCEPTED,
+            sessionId = updatedSession.sessionId,
+            senderId = localPlayerId,
+            payload = acceptPayload
+        )
+
+        // Restore Host lobby state & dismiss reconnect pause immediately
+        graceJob?.cancel()
+        graceJob = null
+        _isConnectionPaused.value = false
+        _pauseRemainingSeconds.value = null
+        _pauseReason.value = ""
+        _lobbyState.value = MultiplayerLobbyState.InGame(
+            session = updatedSession,
+            localPlayer = matchHost,
+            players = rosterSnapshot,
+            isHost = true
+        )
+
+        scope.launch(Dispatchers.IO) {
+            sendRawToWriter(entry.writer, acceptMsg)
+        }
+    }
+
+    /**
+     * Called by the Host to decline an incoming rejoin request.
+     * Notifies the requesting player and closes their pending socket without affecting the ongoing match.
+     */
+    fun rejectRejoinRequest(
+        playerId: String,
+        reason: String = "Host declined your rejoin request"
+    ) {
+        val sessionId = activeMatchSession?.sessionId ?: ""
+        val entry = synchronized(connectionLock) {
+            val removed = pendingRejoinEntries.remove(playerId)
+            publishPendingRejoinRequestsLocked()
+            removed
+        } ?: return
+
+        scope.launch(Dispatchers.IO) {
+            sendRawToWriter(
+                entry.writer,
+                MultiplayerMessage(
+                    type = MultiplayerMessage.TYPE_REJOIN_REJECTED,
+                    sessionId = sessionId,
+                    senderId = localPlayerId,
+                    payload = reason
+                )
+            )
+            try { entry.socket.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun publishPendingRejoinRequestsLocked() {
+        _pendingRejoinRequests.value = pendingRejoinEntries.values.map { it.request }
+    }
+
+    /**
      * Start discovering sessions hosted by nearby devices on this Wi-Fi network.
      */
     fun startDiscovery() {
-        disconnect()
+        disconnect(clearLastMatchSession = false)
 
         val sessions = mutableListOf<DiscoveredSession>()
         _lobbyState.value = MultiplayerLobbyState.Discovering(emptyList())
@@ -389,7 +756,9 @@ class LocalWifiMultiplayerManager(
                 } else {
                     sessions.add(newSession)
                 }
-                _lobbyState.value = MultiplayerLobbyState.Discovering(sessions.toList())
+                if (_lobbyState.value is MultiplayerLobbyState.Discovering) {
+                    _lobbyState.value = MultiplayerLobbyState.Discovering(sessions.toList())
+                }
             }
         }
     }
@@ -402,13 +771,21 @@ class LocalWifiMultiplayerManager(
     }
 
     /**
-     * Connect to an existing discovered session.
+     * Connect to an existing discovered session (pre-game lobby join, or routes cleanly to rejoin if match is in progress).
      */
     fun connectToSession(
         session: DiscoveredSession,
         playerName: String = localDeviceName
     ) {
+        if (session.isInProgress) {
+            requestRejoin(session, playerName)
+            return
+        }
+
         discovery.stopDiscovery()
+        closeClientSocketQuietly()
+        _isSessionHost.value = false
+        _rejoinRequestStatus.value = RejoinRequestStatus.Idle
         _lobbyState.value = MultiplayerLobbyState.Connecting(session)
         lastInGameSession = session
         lastPlayerName = playerName
@@ -435,28 +812,116 @@ class LocalWifiMultiplayerManager(
                 sendRawToWriter(writer, joinMsg)
 
                 // Read server responses
-                clientReaderJob = scope.launch(Dispatchers.IO) {
-                    try {
-                        var line: String? = reader.readLine()
-                        while (line != null && isActive) {
-                            val msg = MultiplayerMessage.fromJson(line)
-                            if (msg != null) {
-                                handleMessageFromServer(msg, session, playerName)
-                            }
-                            line = reader.readLine()
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Client reader stream ended: ${e.message}")
-                    } finally {
-                        onPeerDisconnected("Lost connection to host")
-                    }
-                }
+                startClientReaderLoop(socket, reader, session, playerName)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect to session: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     _lobbyState.value = MultiplayerLobbyState.Disconnected("Could not connect to host at ${session.hostIp}")
                 }
             }
+        }
+    }
+
+    /**
+     * Sends a rejoin request from a disconnected player to the Host of an ongoing match.
+     */
+    fun requestRejoin(
+        session: DiscoveredSession? = _lastMatchSession.value ?: lastInGameSession,
+        playerName: String = lastPlayerName.ifBlank { localDeviceName }
+    ) {
+        val targetSession = session
+        if (targetSession == null) {
+            _rejoinRequestStatus.value = RejoinRequestStatus.Rejected("No active match session to rejoin")
+            return
+        }
+
+        discovery.stopDiscovery()
+        closeClientSocketQuietly()
+        graceJob?.cancel()
+        graceJob = null
+        _isSessionHost.value = false
+        lastInGameSession = targetSession
+        lastPlayerName = playerName
+        _lastMatchSession.value = targetSession
+        _rejoinRequestStatus.value = RejoinRequestStatus.Pending(targetSession)
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                val socket = Socket()
+                socket.connect(InetSocketAddress(targetSession.hostIp, targetSession.port), 6000)
+                socket.tcpNoDelay = true
+
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+                val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream()))
+
+                clientSocket = socket
+                clientWriter = writer
+
+                val rejoinMsg = MultiplayerMessage(
+                    type = MultiplayerMessage.TYPE_REJOIN_REQUEST,
+                    sessionId = targetSession.sessionId,
+                    senderId = localPlayerId,
+                    payload = playerName
+                )
+                sendRawToWriter(writer, rejoinMsg)
+
+                startClientReaderLoop(socket, reader, targetSession, playerName)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to send rejoin request: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    _rejoinRequestStatus.value = RejoinRequestStatus.Rejected(
+                        "Could not reach host — the room may have closed"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startClientReaderLoop(
+        socket: Socket,
+        reader: BufferedReader,
+        session: DiscoveredSession,
+        playerName: String
+    ) {
+        clientReaderJob?.cancel()
+        clientReaderJob = scope.launch(Dispatchers.IO) {
+            try {
+                var line: String? = reader.readLine()
+                while (line != null && isActive) {
+                    val msg = MultiplayerMessage.fromJson(line)
+                    if (msg != null) {
+                        handleMessageFromServer(msg, session, playerName)
+                    }
+                    line = reader.readLine()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Client reader stream ended: ${e.message}")
+            } finally {
+                val isCurrentSocket = (clientSocket === socket)
+                if (isCurrentSocket) {
+                    clientSocket = null
+                    clientWriter = null
+                    try { socket.close() } catch (_: Exception) {}
+                    if (_rejoinRequestStatus.value is RejoinRequestStatus.Pending) {
+                        _rejoinRequestStatus.value = RejoinRequestStatus.Rejected("Lost connection to host while waiting for approval")
+                    } else {
+                        onPeerDisconnected("Lost connection to host")
+                    }
+                } else {
+                    try { socket.close() } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    private fun closeClientSocketQuietly() {
+        val oldSocket = clientSocket
+        clientSocket = null
+        clientWriter = null
+        clientReaderJob?.cancel()
+        clientReaderJob = null
+        if (oldSocket != null) {
+            try { oldSocket.close() } catch (_: Exception) {}
         }
     }
 
@@ -484,36 +949,40 @@ class LocalWifiMultiplayerManager(
     }
 
     /**
-     * Called by Host when both players are connected and the Host taps Start Game.
+     * Called by Host when players are connected and the Host taps Start Game.
      */
     fun launchGame(extraConfigPayload: String = "") {
         val currentState = _lobbyState.value
         if (currentState is MultiplayerLobbyState.Connected && currentState.isHost) {
-            val playersJsonArr = org.json.JSONArray().apply {
-                currentState.players.forEach { p ->
-                    put(JSONObject().apply {
-                        put("id", p.id)
-                        put("name", p.name)
-                        put("isHost", p.isHost)
-                        put("role", p.role)
-                    })
-                }
+            val activeSession = currentState.session.copy(isInProgress = true)
+            activeMatchSession = activeSession
+            activeMatchHostPlayer = currentState.localPlayer
+            activeGameConfigPayload = extraConfigPayload
+            synchronized(hostConnectedPlayers) {
+                activeMatchRoster.clear()
+                activeMatchRoster.addAll(currentState.players)
             }
+
+            // Continue announcing room with isInProgress = true so disconnected players can find & rejoin
+            discovery.startAnnouncing(activeSession, scope)
+
+            val playersJsonArr = encodePlayersJson(currentState.players)
             val startPayload = JSONObject().apply {
                 put("config", extraConfigPayload)
                 put("players", playersJsonArr)
+                put("chessHostColor", _chessHostColor.value)
             }.toString()
 
             val msg = MultiplayerMessage(
                 type = MultiplayerMessage.TYPE_GAME_START,
-                sessionId = currentState.session.sessionId,
+                sessionId = activeSession.sessionId,
                 senderId = localPlayerId,
                 payload = startPayload
             )
             broadcastToClients(msg)
 
             val startInfo = GameStartInfo(
-                gameId = currentState.session.gameId,
+                gameId = activeSession.gameId,
                 localRole = "PLAYER_1",
                 players = currentState.players,
                 isHost = true,
@@ -522,7 +991,7 @@ class LocalWifiMultiplayerManager(
             _gameStartEvent.tryEmit(startInfo)
 
             _lobbyState.value = MultiplayerLobbyState.InGame(
-                session = currentState.session,
+                session = activeSession,
                 localPlayer = currentState.localPlayer,
                 players = currentState.players,
                 isHost = true
@@ -567,12 +1036,11 @@ class LocalWifiMultiplayerManager(
      */
     fun sendReset(extraPayload: String = "") {
         val currentState = _lobbyState.value
-        val sessionId = when (currentState) {
-            is MultiplayerLobbyState.InGame -> currentState.session.sessionId
-            is MultiplayerLobbyState.Connected -> currentState.session.sessionId
+        val (sessionId, isHost) = when (currentState) {
+            is MultiplayerLobbyState.InGame -> currentState.session.sessionId to currentState.isHost
+            is MultiplayerLobbyState.Connected -> currentState.session.sessionId to currentState.isHost
             else -> return
         }
-        val isHost = (currentState as? MultiplayerLobbyState.InGame)?.isHost ?: true
 
         val msg = MultiplayerMessage(
             type = MultiplayerMessage.TYPE_GAME_RESET,
@@ -624,23 +1092,122 @@ class LocalWifiMultiplayerManager(
     ) {
         when (msg.type) {
             MultiplayerMessage.TYPE_JOIN_REJECTED -> {
+                closeClientSocketQuietly()
                 onPeerDisconnected(msg.payload.ifBlank { "Session is full (max players reached)" })
+            }
+            MultiplayerMessage.TYPE_REJOIN_PENDING -> {
+                val updatedSession = try {
+                    val json = JSONObject(msg.payload)
+                    session.copy(
+                        sessionId = json.optString("sessionId", msg.sessionId),
+                        hostName = json.optString("hostName", session.hostName),
+                        gameId = json.optString("gameId", session.gameId),
+                        gameTitle = json.optString("gameTitle", session.gameTitle),
+                        isInProgress = true
+                    )
+                } catch (_: Exception) {
+                    session.copy(sessionId = msg.sessionId, isInProgress = true)
+                }
+                graceJob?.cancel()
+                graceJob = null
+                lastInGameSession = updatedSession
+                _lastMatchSession.value = updatedSession
+                _rejoinRequestStatus.value = RejoinRequestStatus.Pending(updatedSession)
+            }
+            MultiplayerMessage.TYPE_REJOIN_ACCEPTED -> {
+                val payloadJson = try { JSONObject(msg.payload) } catch (_: Exception) { JSONObject() }
+                val hostName = payloadJson.optString("hostName", session.hostName)
+                val actualGameId = payloadJson.optString("gameId", session.gameId)
+                val actualGameTitle = payloadJson.optString("gameTitle", session.gameTitle)
+                val hostColor = payloadJson.optString("chessHostColor", _chessHostColor.value)
+                val assignedRole = payloadJson.optString("role", "PLAYER_2")
+                val maxPlayers = payloadJson.optInt("maxPlayers", session.maxPlayers)
+                val configPayload = payloadJson.optString("config", "")
+                val stateGameId = payloadJson.optString("stateGameId", actualGameId)
+                val stateSnapshot = payloadJson.optString("stateSnapshot", "")
+
+                _chessHostColor.value = hostColor
+
+                val playersList = parsePlayersJson(payloadJson.optJSONArray("players"))
+                val localPlayer = playersList.firstOrNull { it.id == localPlayerId }
+                    ?: MultiplayerPlayer(
+                        id = localPlayerId,
+                        name = localPlayerName,
+                        isHost = false,
+                        role = assignedRole
+                    )
+                val hostPlayer = MultiplayerPlayer(
+                    id = msg.senderId,
+                    name = hostName,
+                    isHost = true,
+                    role = "PLAYER_1"
+                )
+                val finalPlayers = if (playersList.isNotEmpty()) playersList else listOf(hostPlayer, localPlayer)
+
+                val updatedSession = session.copy(
+                    sessionId = msg.sessionId,
+                    hostName = hostName,
+                    gameId = actualGameId,
+                    gameTitle = actualGameTitle,
+                    currentPlayers = finalPlayers.size,
+                    maxPlayers = maxPlayers,
+                    isInProgress = true
+                )
+
+                // Store sticky state snapshot for newly mounted views AND emit action for already mounted views
+                if (stateSnapshot.isNotBlank()) {
+                    _pendingRejoinStateSync.value = stateGameId to stateSnapshot
+                    _incomingActions.tryEmit(
+                        PlayerAction(
+                            senderId = msg.senderId,
+                            actionType = MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC,
+                            payload = stateSnapshot
+                        )
+                    )
+                }
+
+                graceJob?.cancel()
+                graceJob = null
+                _isConnectionPaused.value = false
+                _pauseRemainingSeconds.value = null
+                _pauseReason.value = ""
+                lastInGameSession = updatedSession
+                _lastMatchSession.value = updatedSession
+                _rejoinRequestStatus.value = RejoinRequestStatus.Accepted(updatedSession)
+
+                val startInfo = GameStartInfo(
+                    gameId = updatedSession.gameId,
+                    localRole = localPlayer.role,
+                    players = finalPlayers,
+                    isHost = false,
+                    configPayload = configPayload
+                )
+                _gameStartEvent.tryEmit(startInfo)
+
+                _lobbyState.value = MultiplayerLobbyState.InGame(
+                    session = updatedSession,
+                    localPlayer = localPlayer,
+                    players = finalPlayers,
+                    isHost = false
+                )
+            }
+            MultiplayerMessage.TYPE_REJOIN_REJECTED -> {
+                val reason = msg.payload.ifBlank { "Host declined your rejoin request" }
+                closeClientSocketQuietly()
+                _rejoinRequestStatus.value = RejoinRequestStatus.Rejected(reason)
+                val current = _lobbyState.value
+                if (current is MultiplayerLobbyState.Connecting ||
+                    current is MultiplayerLobbyState.Connected ||
+                    current is MultiplayerLobbyState.InGame
+                ) {
+                    _isConnectionPaused.value = false
+                    _pauseRemainingSeconds.value = null
+                    _lobbyState.value = MultiplayerLobbyState.Disconnected(reason)
+                }
             }
             MultiplayerMessage.TYPE_PLAYER_LIST -> {
                 try {
-                    val arr = org.json.JSONArray(msg.payload)
-                    val updatedPlayers = mutableListOf<MultiplayerPlayer>()
-                    for (i in 0 until arr.length()) {
-                        val pObj = arr.getJSONObject(i)
-                        updatedPlayers.add(
-                            MultiplayerPlayer(
-                                id = pObj.getString("id"),
-                                name = pObj.getString("name"),
-                                isHost = pObj.getBoolean("isHost"),
-                                role = pObj.getString("role")
-                            )
-                        )
-                    }
+                    val updatedPlayers = parsePlayersJson(JSONArray(msg.payload))
                     val current = _lobbyState.value
                     if (current is MultiplayerLobbyState.Connected) {
                         _lobbyState.value = current.copy(
@@ -653,56 +1220,16 @@ class LocalWifiMultiplayerManager(
                 }
             }
             MultiplayerMessage.TYPE_JOIN_ACCEPTED -> {
-                val hostName = try {
-                    JSONObject(msg.payload).optString("hostName", session.hostName)
-                } catch (e: Exception) {
-                    session.hostName
-                }
-                val actualGameId = try {
-                    JSONObject(msg.payload).optString("gameId", session.gameId)
-                } catch (e: Exception) {
-                    session.gameId
-                }
-                val actualGameTitle = try {
-                    JSONObject(msg.payload).optString("gameTitle", session.gameTitle)
-                } catch (e: Exception) {
-                    session.gameTitle
-                }
-                val hostColor = try {
-                    JSONObject(msg.payload).optString("chessHostColor", "WHITE")
-                } catch (e: Exception) {
-                    "WHITE"
-                }
+                val payloadJson = try { JSONObject(msg.payload) } catch (_: Exception) { JSONObject() }
+                val hostName = payloadJson.optString("hostName", session.hostName)
+                val actualGameId = payloadJson.optString("gameId", session.gameId)
+                val actualGameTitle = payloadJson.optString("gameTitle", session.gameTitle)
+                val hostColor = payloadJson.optString("chessHostColor", "WHITE")
                 _chessHostColor.value = hostColor
 
-                val assignedRole = try {
-                    JSONObject(msg.payload).optString("role", "PLAYER_2")
-                } catch (e: Exception) {
-                    "PLAYER_2"
-                }
-                val maxPlayers = try {
-                    JSONObject(msg.payload).optInt("maxPlayers", session.maxPlayers)
-                } catch (e: Exception) {
-                    session.maxPlayers
-                }
-
-                val playersList = mutableListOf<MultiplayerPlayer>()
-                try {
-                    val pArr = JSONObject(msg.payload).optJSONArray("players")
-                    if (pArr != null) {
-                        for (i in 0 until pArr.length()) {
-                            val pObj = pArr.getJSONObject(i)
-                            playersList.add(
-                                MultiplayerPlayer(
-                                    id = pObj.getString("id"),
-                                    name = pObj.getString("name"),
-                                    isHost = pObj.getBoolean("isHost"),
-                                    role = pObj.getString("role")
-                                )
-                            )
-                        }
-                    }
-                } catch (e: Exception) {}
+                val assignedRole = payloadJson.optString("role", "PLAYER_2")
+                val maxPlayers = payloadJson.optInt("maxPlayers", session.maxPlayers)
+                val playersList = parsePlayersJson(payloadJson.optJSONArray("players"))
 
                 val localPlayer = MultiplayerPlayer(
                     id = localPlayerId,
@@ -727,6 +1254,7 @@ class LocalWifiMultiplayerManager(
                     currentPlayers = finalPlayers.size,
                     maxPlayers = maxPlayers
                 )
+                lastInGameSession = updatedSession
 
                 _lobbyState.value = MultiplayerLobbyState.Connected(
                     session = updatedSession,
@@ -749,23 +1277,10 @@ class LocalWifiMultiplayerManager(
                             _chessHostColor.value = color
                         }
                         if (json.has("players")) {
-                            val pArr = json.getJSONArray("players")
-                            val pList = mutableListOf<MultiplayerPlayer>()
-                            for (i in 0 until pArr.length()) {
-                                val pObj = pArr.getJSONObject(i)
-                                pList.add(
-                                    MultiplayerPlayer(
-                                        id = pObj.getString("id"),
-                                        name = pObj.getString("name"),
-                                        isHost = pObj.getBoolean("isHost"),
-                                        role = pObj.getString("role")
-                                    )
-                                )
-                            }
-                            parsedPlayers = pList
+                            parsedPlayers = parsePlayersJson(json.getJSONArray("players"))
                         }
                     }
-                } catch (e: Exception) {}
+                } catch (_: Exception) {}
 
                 val currentState = _lobbyState.value
                 val existingPlayers = (currentState as? MultiplayerLobbyState.Connected)?.players ?: emptyList()
@@ -784,7 +1299,14 @@ class LocalWifiMultiplayerManager(
                         role = "PLAYER_2"
                     )
 
-                val updatedSession = session.copy(sessionId = msg.sessionId, currentPlayers = finalPlayers.size)
+                val updatedSession = session.copy(
+                    sessionId = msg.sessionId,
+                    currentPlayers = finalPlayers.size,
+                    isInProgress = true
+                )
+                lastInGameSession = updatedSession
+                _lastMatchSession.value = updatedSession
+
                 val startInfo = GameStartInfo(
                     gameId = updatedSession.gameId,
                     localRole = localPlayer.role,
@@ -815,8 +1337,6 @@ class LocalWifiMultiplayerManager(
                         _pauseRemainingSeconds.value = null
                         graceJob?.cancel()
                         graceJob = null
-                        clientAutoReconnectJob?.cancel()
-                        clientAutoReconnectJob = null
                     }
                     _incomingActions.tryEmit(PlayerAction(msg.senderId, actionType, actionData))
                 } catch (e: Exception) {
@@ -828,46 +1348,94 @@ class LocalWifiMultiplayerManager(
             }
             MultiplayerMessage.TYPE_HOST_CLOSED,
             MultiplayerMessage.TYPE_LEAVE -> {
-                onPeerDisconnected("Host closed the room")
+                lastInGameSession = null
+                _lastMatchSession.value = null
+                if (_rejoinRequestStatus.value is RejoinRequestStatus.Pending) {
+                    _rejoinRequestStatus.value = RejoinRequestStatus.Rejected("Host closed the room")
+                }
+                closeClientSocketQuietly()
+                onPeerDisconnected("Host closed the room", hostClosed = true)
             }
         }
     }
 
+    private fun encodePlayersJson(players: List<MultiplayerPlayer>): JSONArray {
+        return JSONArray().apply {
+            players.forEach { p ->
+                put(JSONObject().apply {
+                    put("id", p.id)
+                    put("name", p.name)
+                    put("isHost", p.isHost)
+                    put("role", p.role)
+                })
+            }
+        }
+    }
+
+    private fun parsePlayersJson(arr: JSONArray?): List<MultiplayerPlayer> {
+        if (arr == null) return emptyList()
+        val list = mutableListOf<MultiplayerPlayer>()
+        for (i in 0 until arr.length()) {
+            val pObj = arr.getJSONObject(i)
+            list.add(
+                MultiplayerPlayer(
+                    id = pObj.getString("id"),
+                    name = pObj.getString("name"),
+                    isHost = pObj.getBoolean("isHost"),
+                    role = pObj.getString("role")
+                )
+            )
+        }
+        return list
+    }
+
     private fun broadcastToClients(msg: MultiplayerMessage) {
         scope.launch(Dispatchers.IO) {
-            synchronized(clientSockets) {
-                clientWriters.forEach { writer ->
-                    sendRawToWriter(writer, msg)
-                }
+            val writers = synchronized(connectionLock) {
+                activeClientConnections.values.map { it.writer }
+            }
+            writers.forEach { writer ->
+                sendRawToWriter(writer, msg)
             }
         }
     }
 
     private fun sendRawToWriter(writer: BufferedWriter, msg: MultiplayerMessage) {
         try {
-            writer.write(msg.toJson())
-            writer.newLine()
-            writer.flush()
+            synchronized(writer) {
+                writer.write(msg.toJson())
+                writer.newLine()
+                writer.flush()
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to send message: ${e.message}")
         }
     }
 
-    private fun onPeerDisconnected(reason: String) {
+    private fun onPeerDisconnected(reason: String, hostClosed: Boolean = false) {
         scope.launch(Dispatchers.Main) {
             val current = _lobbyState.value
             if (current is MultiplayerLobbyState.InGame) {
+                if (hostClosed) {
+                    graceJob?.cancel()
+                    graceJob = null
+                    _isConnectionPaused.value = false
+                    _pauseRemainingSeconds.value = null
+                    _pauseReason.value = reason
+                    _lobbyState.value = MultiplayerLobbyState.Disconnected(reason)
+                    return@launch
+                }
+
                 if (_isConnectionPaused.value) return@launch
 
                 _isConnectionPaused.value = true
                 _pauseReason.value = reason
                 _pauseRemainingSeconds.value = 10
 
-                lastInGameSession = current.session
-
-                // If Client, launch background auto-reconnect attempts to recover from screen lock
                 if (!current.isHost) {
-                    startClientAutoReconnect(current.session)
+                    lastInGameSession = current.session
+                    _lastMatchSession.value = current.session
+                    _rejoinRequestStatus.value = RejoinRequestStatus.Idle
                 }
 
                 graceJob?.cancel()
@@ -879,82 +1447,71 @@ class LocalWifiMultiplayerManager(
                             return@launch
                         }
                     }
+                    // If Host currently has pending rejoin request(s), stay paused waiting for Host's decision
+                    if (current.isHost && _pendingRejoinRequests.value.isNotEmpty()) {
+                        _pauseRemainingSeconds.value = 0
+                        return@launch
+                    }
                     _pauseRemainingSeconds.value = 0
                     _isConnectionPaused.value = false
-                    clientAutoReconnectJob?.cancel()
-                    _lobbyState.value = MultiplayerLobbyState.Disconnected("Opponent disconnected (10s reconnect window expired)")
+                    _lobbyState.value = MultiplayerLobbyState.Disconnected(
+                        if (current.isHost) {
+                            "Opponent disconnected (waiting for rejoin or exit to lobby)"
+                        } else {
+                            "Disconnected from host. Tap Request Rejoin to reconnect."
+                        }
+                    )
                 }
-            } else if (current is MultiplayerLobbyState.Connected) {
+            } else if (current is MultiplayerLobbyState.Connected || current is MultiplayerLobbyState.Connecting) {
                 _lobbyState.value = MultiplayerLobbyState.Disconnected(reason)
             }
         }
     }
 
-    private fun startClientAutoReconnect(session: DiscoveredSession) {
-        clientAutoReconnectJob?.cancel()
-        clientAutoReconnectJob = scope.launch(Dispatchers.IO) {
-            var attempts = 0
-            while (_isConnectionPaused.value && attempts < 8 && isActive) {
-                kotlinx.coroutines.delay(1200)
-                try {
-                    val socket = Socket()
-                    socket.connect(InetSocketAddress(session.hostIp, session.port), 2000)
-                    socket.tcpNoDelay = true
-
-                    val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                    val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream()))
-
-                    clientSocket = socket
-                    clientWriter = writer
-
-                    // Send Reconnect Join Request with existing local player ID
-                    val joinMsg = MultiplayerMessage(
-                        type = MultiplayerMessage.TYPE_JOIN_REQUEST,
-                        sessionId = session.sessionId,
-                        senderId = localPlayerId,
-                        payload = if (customUsername.isNotBlank()) customUsername else localDeviceName
-                    )
-                    sendRawToWriter(writer, joinMsg)
-
-                    // Re-start reader loop
-                    clientReaderJob = scope.launch(Dispatchers.IO) {
-                        try {
-                            var line: String? = reader.readLine()
-                            while (line != null && isActive) {
-                                val msg = MultiplayerMessage.fromJson(line)
-                                if (msg != null) {
-                                    handleMessageFromServer(msg, session, localDeviceName)
-                                }
-                                line = reader.readLine()
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Reconnected client reader ended: ${e.message}")
-                        } finally {
-                            onPeerDisconnected("Lost connection to host")
-                        }
-                    }
-
-                    // Successfully re-connected!
-                    withContext(Dispatchers.Main) {
-                        notifyConnectionResumed()
-                    }
-                    break
-                } catch (e: Exception) {
-                    attempts++
-                    Log.d(TAG, "Reconnect attempt $attempts failed: ${e.message}")
-                }
-            }
-        }
-    }
-
-    fun disconnect() {
+    fun disconnect(clearLastMatchSession: Boolean = false) {
         graceJob?.cancel()
         graceJob = null
-        clientAutoReconnectJob?.cancel()
-        clientAutoReconnectJob = null
         _isConnectionPaused.value = false
         _pauseRemainingSeconds.value = null
         _pauseReason.value = ""
+
+        val wasHost = _isSessionHost.value
+        val hostSessionId = activeMatchSession?.sessionId
+            ?: (_lobbyState.value as? MultiplayerLobbyState.Hosting)?.session?.sessionId
+            ?: (_lobbyState.value as? MultiplayerLobbyState.Connected)?.session?.sessionId
+            ?: (_lobbyState.value as? MultiplayerLobbyState.InGame)?.session?.sessionId
+
+        // Notify any connected or pending-rejoin clients that Host closed the room
+        val socketsToClose = mutableListOf<Socket>()
+        val writersToNotify = mutableListOf<BufferedWriter>()
+        synchronized(connectionLock) {
+            activeClientConnections.values.forEach { conn ->
+                writersToNotify.add(conn.writer)
+                socketsToClose.add(conn.socket)
+            }
+            pendingRejoinEntries.values.forEach { entry ->
+                writersToNotify.add(entry.writer)
+                socketsToClose.add(entry.socket)
+            }
+            activeClientConnections.clear()
+            pendingRejoinEntries.clear()
+            publishPendingRejoinRequestsLocked()
+        }
+
+        if (wasHost && writersToNotify.isNotEmpty() && hostSessionId != null) {
+            val closedMsg = MultiplayerMessage(
+                type = MultiplayerMessage.TYPE_HOST_CLOSED,
+                sessionId = hostSessionId,
+                senderId = localPlayerId,
+                payload = "Host closed the room"
+            )
+            scope.launch(Dispatchers.IO) {
+                writersToNotify.forEach { w -> sendRawToWriter(w, closedMsg) }
+                socketsToClose.forEach { s -> try { s.close() } catch (_: Exception) {} }
+            }
+        } else {
+            socketsToClose.forEach { s -> try { s.close() } catch (_: Exception) {} }
+        }
 
         discovery.stopAnnouncing()
         discovery.stopDiscovery()
@@ -962,21 +1519,25 @@ class LocalWifiMultiplayerManager(
         hostAcceptJob?.cancel()
         hostAcceptJob = null
 
-        try { hostServerSocket?.close() } catch (ignored: Exception) {}
+        try { hostServerSocket?.close() } catch (_: Exception) {}
         hostServerSocket = null
 
-        synchronized(clientSockets) {
-            clientSockets.forEach { try { it.close() } catch (ignored: Exception) {} }
-            clientSockets.clear()
-            clientWriters.clear()
+        closeClientSocketQuietly()
+
+        activeMatchSession = null
+        activeMatchHostPlayer = null
+        activeGameConfigPayload = ""
+        synchronized(hostConnectedPlayers) {
+            hostConnectedPlayers.clear()
+            activeMatchRoster.clear()
         }
-
-        clientReaderJob?.cancel()
-        clientReaderJob = null
-
-        try { clientSocket?.close() } catch (ignored: Exception) {}
-        clientSocket = null
-        clientWriter = null
+        _isSessionHost.value = false
+        _rejoinRequestStatus.value = RejoinRequestStatus.Idle
+        _pendingRejoinStateSync.value = null
+        if (clearLastMatchSession) {
+            lastInGameSession = null
+            _lastMatchSession.value = null
+        }
 
         _lobbyState.value = MultiplayerLobbyState.Idle
         _chessHostColor.value = "WHITE"
@@ -984,6 +1545,24 @@ class LocalWifiMultiplayerManager(
 
     companion object {
         private const val TAG = "WifiMultiplayer"
+        private const val PREFS_NAME = "chill_multiplayer_prefs"
+        private const val KEY_STABLE_PLAYER_ID = "stable_player_id"
         const val DEFAULT_GAME_PORT = 8890
+
+        private fun resolveOrCreateStablePlayerId(context: Context): String {
+            return try {
+                val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val existing = prefs.getString(KEY_STABLE_PLAYER_ID, null)
+                if (!existing.isNullOrBlank()) {
+                    existing
+                } else {
+                    val created = UUID.randomUUID().toString()
+                    prefs.edit().putString(KEY_STABLE_PLAYER_ID, created).apply()
+                    created
+                }
+            } catch (_: Exception) {
+                UUID.randomUUID().toString()
+            }
+        }
     }
 }

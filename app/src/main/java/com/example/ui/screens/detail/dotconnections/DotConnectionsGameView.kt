@@ -53,6 +53,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.audio.DotConnectionsSoundManager
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.dotconnections.DotBoardSize
 import com.example.core.engine.dotconnections.DotConnectionsBot
 import com.example.core.engine.dotconnections.DotConnectionsEngine
@@ -81,7 +83,8 @@ fun DotConnectionsGameView(
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
     onExit: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    savedSessionJson: String? = null
 ) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -96,14 +99,27 @@ fun DotConnectionsGameView(
         }
     }
 
-    val engine = remember(boardSize) { DotConnectionsEngine(boardSize) }
-    var gameState by remember(boardSize) { mutableStateOf(engine.state) }
+    val restoredSession = remember(savedSessionJson, selectedMode) {
+        if (selectedMode == GameMode.SOLO && savedSessionJson != null) {
+            BotGameStateSerializer.decodeDotConnections(savedSessionJson)
+        } else null
+    }
+    val effectiveBoardSize = restoredSession?.state?.boardSize ?: boardSize
+    val engine = remember(effectiveBoardSize) {
+        DotConnectionsEngine(effectiveBoardSize).apply {
+            if (restoredSession != null) {
+                restoreState(restoredSession.state)
+            }
+        }
+    }
+    var gameState by remember(effectiveBoardSize) { mutableStateOf(engine.state) }
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? com.example.core.multiplayer.MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
     val localPlayer = if (isHost) DotPlayer.PLAYER_1 else DotPlayer.PLAYER_2
 
     var isBotThinking by remember { mutableStateOf(false) }
@@ -113,6 +129,26 @@ fun DotConnectionsGameView(
     var showHelpDialog by remember { mutableStateOf(false) }
     var gameSessionId by remember { mutableIntStateOf(0) }
 
+    fun persistBotState() {
+        if (selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        if (current.isGameOver) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_DOT_CONNECTIONS)
+        } else {
+            BotGameStateSerializer.encodeDotConnections(current, difficulty)?.let {
+                viewModel.saveBotSession(it)
+            }
+        }
+    }
+
+    LaunchedEffect(gameState, selectedMode) {
+        persistBotState()
+    }
+
+    BotSaveLifecycleEffect(enabled = selectedMode == GameMode.SOLO) {
+        persistBotState()
+    }
+
     fun vibrate(isBig: Boolean = false) {
         if (settings.vibrationEnabled) {
             val effect = if (isBig) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP
@@ -121,7 +157,7 @@ fun DotConnectionsGameView(
     }
 
     fun restartGame() {
-        engine.resetGame(boardSize)
+        engine.resetGame(effectiveBoardSize)
         gameState = engine.state
         isBotThinking = false
         showExtraTurnBanner = false
@@ -129,6 +165,9 @@ fun DotConnectionsGameView(
         hasPlayedOutcomeAudio = false
         soundManager.stopAllSounds()
         gameSessionId++
+        if (selectedMode == GameMode.SOLO) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_DOT_CONNECTIONS)
+        }
         vibrate()
     }
 
@@ -159,11 +198,43 @@ fun DotConnectionsGameView(
         }
     }
 
+    DisposableEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "dot_connections" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeDotConnections(engine.state)
+            }
+        }
+        onDispose {
+            if (isHost) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && !isHost) {
+            multiplayerManager.consumePendingRejoinState("dot_connections")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeDotConnections(snapshot)?.let { restored ->
+                    engine.restoreState(restored)
+                    gameState = engine.state
+                }
+            }
+        }
+    }
+
     // Listen for incoming actions in Nearby Mode for Dot Connections
     LaunchedEffect(isNearbyMode) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
+                        if (!isHost) {
+                            com.example.core.multiplayer.MultiplayerStateSnapshot.decodeDotConnections(action.payload)?.let { restored ->
+                                engine.restoreState(restored)
+                                gameState = engine.state
+                            }
+                        }
+                    }
                     "DOT_EDGE" -> {
                         val parts = action.payload.split(",")
                         if (parts.size == 3) {

@@ -23,6 +23,10 @@ class DotConnectionsEngine(
         state = DotConnectionsGameState.initial(boardSize)
     }
 
+    fun restoreState(savedState: DotConnectionsGameState) {
+        state = savedState
+    }
+
     fun makeMove(edge: DotEdge, player: DotPlayer = state.activePlayer): DotMoveResult {
         if (state.isGameOver) return DotMoveResult.GameOver
         if (state.activePlayer != player) return DotMoveResult.NotPlayerTurn

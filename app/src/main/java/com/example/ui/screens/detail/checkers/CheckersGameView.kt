@@ -56,6 +56,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.core.audio.CheckersSoundManager
+import com.example.core.data.save.BotGameStateSerializer
+import com.example.core.data.save.BotSaveLifecycleEffect
 import com.example.core.engine.GameStatus
 import com.example.core.engine.PlayerId
 import com.example.core.engine.checkers.CheckersBot
@@ -89,7 +91,8 @@ fun CheckersGameView(
     viewModel: MainViewModel,
     onChangeMode: () -> Unit,
     onExit: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    savedSessionJson: String? = null
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -112,9 +115,10 @@ fun CheckersGameView(
 
     val multiplayerManager = viewModel.multiplayerManager
     val lobbyState by multiplayerManager.lobbyState.collectAsState()
+    val isSessionHost by multiplayerManager.isSessionHost.collectAsState()
     val isNearbyMode = selectedMode == GameMode.BLUETOOTH_1V1
     val isHost = (lobbyState as? MultiplayerLobbyState.InGame)?.isHost
-        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: true)
+        ?: ((lobbyState as? MultiplayerLobbyState.Connected)?.isHost ?: isSessionHost)
 
     // Local player role in Nearby: Host is Red (Player 1), Guest is Black (Player 2)
     val localPlayer = when (selectedMode) {
@@ -144,9 +148,26 @@ fun CheckersGameView(
         GameMode.BLUETOOTH_1V1 -> if (isHost) "$guestName (OPPONENT • BLACK ⚫)" else "$guestName (YOU • BLACK ⚫)"
     }
 
-    val engine = remember { CheckersEngine() }
+    val restoredSession = remember(savedSessionJson, selectedMode) {
+        if (selectedMode == GameMode.SOLO && savedSessionJson != null) {
+            BotGameStateSerializer.decodeCheckers(savedSessionJson)
+        } else null
+    }
+    val engine = remember {
+        CheckersEngine().apply {
+            if (restoredSession != null) {
+                syncState(restoredSession.state)
+            }
+        }
+    }
     var gameState by remember { mutableStateOf(engine.state) }
-    var selectedSquare by remember { mutableStateOf<CheckersSquare?>(null) }
+    var selectedSquare by remember {
+        mutableStateOf<CheckersSquare?>(
+            if (restoredSession?.state?.activePlayer == PlayerId.PLAYER_1) {
+                restoredSession.state.mustContinueJumpingFrom
+            } else null
+        )
+    }
     var isBotThinking by remember { mutableStateOf(false) }
     var matchRecorded by remember { mutableStateOf(false) }
     var showRestartConfirmDialog by remember { mutableStateOf(false) }
@@ -154,6 +175,26 @@ fun CheckersGameView(
     var showDisconnectDialog by remember { mutableStateOf(false) }
     var disconnectReason by remember { mutableStateOf("Connection to peer was lost.") }
     var matchId by remember { mutableIntStateOf(1) }
+
+    fun persistBotState() {
+        if (selectedMode != GameMode.SOLO) return
+        val current = engine.state
+        if (current.status.isFinished || current.status is GameStatus.RoundDraw) {
+            viewModel.clearBotSession(BotGameStateSerializer.GAME_CHECKERS)
+        } else {
+            BotGameStateSerializer.encodeCheckers(current, difficulty)?.let {
+                viewModel.saveBotSession(it)
+            }
+        }
+    }
+
+    LaunchedEffect(gameState, selectedMode) {
+        persistBotState()
+    }
+
+    BotSaveLifecycleEffect(enabled = selectedMode == GameMode.SOLO) {
+        persistBotState()
+    }
 
     // Networking synchronization state (Host-authoritative)
     var expectedSeqNum by remember { mutableIntStateOf(0) }
@@ -407,11 +448,47 @@ fun CheckersGameView(
         }
     }
 
+    DisposableEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && isHost) {
+            multiplayerManager.registerHostStateSnapshotProvider {
+                "checkers" to com.example.core.multiplayer.MultiplayerStateSnapshot.encodeCheckers(engine.state)
+            }
+        }
+        onDispose {
+            if (isHost) {
+                multiplayerManager.registerHostStateSnapshotProvider(null)
+            }
+        }
+    }
+
+    LaunchedEffect(isNearbyMode, isHost) {
+        if (isNearbyMode && !isHost) {
+            multiplayerManager.consumePendingRejoinState("checkers")?.let { snapshot ->
+                com.example.core.multiplayer.MultiplayerStateSnapshot.decodeCheckers(snapshot)?.let { synced ->
+                    engine.syncState(synced)
+                    gameState = synced
+                    selectedSquare = synced.mustContinueJumpingFrom?.takeIf { synced.activePlayer == localPlayer }
+                    isAwaitingServerResponse = false
+                }
+            }
+        }
+    }
+
     // Nearby Mode TCP Action Listener
     LaunchedEffect(isNearbyMode) {
         if (isNearbyMode) {
             multiplayerManager.incomingActions.collect { action ->
                 when (action.actionType) {
+                    com.example.core.multiplayer.MultiplayerStateSnapshot.ACTION_REJOIN_STATE_SYNC -> {
+                        if (!isHost) {
+                            com.example.core.multiplayer.MultiplayerStateSnapshot.decodeCheckers(action.payload)?.let { synced ->
+                                engine.syncState(synced)
+                                gameState = synced
+                                selectedSquare = synced.mustContinueJumpingFrom?.takeIf { synced.activePlayer == localPlayer }
+                                isAwaitingServerResponse = false
+                            }
+                        }
+                    }
                     CheckersNetworkProtocol.ACTION_MOVE_REQUEST -> {
                         val req = CheckersNetworkProtocol.MoveRequest.fromJson(action.payload)
                         if (req != null && isHost) {
@@ -860,6 +937,9 @@ fun CheckersGameView(
                             selectedSquare = null
                             matchRecorded = false
                             matchId++
+                            if (selectedMode == GameMode.SOLO) {
+                                viewModel.clearBotSession(BotGameStateSerializer.GAME_CHECKERS)
+                            }
                             vibrateTap()
                         },
                         backgroundColor = PlayfulOrange,
@@ -1084,6 +1164,9 @@ fun CheckersGameView(
                                 selectedSquare = null
                                 matchRecorded = false
                                 matchId++
+                                if (selectedMode == GameMode.SOLO) {
+                                    viewModel.clearBotSession(BotGameStateSerializer.GAME_CHECKERS)
+                                }
                                 vibrateTap()
                             } else {
                                 rematchRequestedByLocal = true
